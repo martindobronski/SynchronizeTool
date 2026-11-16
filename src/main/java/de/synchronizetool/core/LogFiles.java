@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -18,9 +17,9 @@ import java.util.Locale;
  * stellt sie der Oberfläche zum Anzeigen zur Verfügung.
  *
  * <pre>
- * ~/.synchronizetool/logs/
- *   erstellung/   20261116_143000_paket-1.log
- *   einspielung/  20261116_143500_sync-paket-1.log
+ * Programmordner/Logfiles/
+ *   Erstellung/   20261116_143000_paket-1.log
+ *   Einspielung/  20261116_143500_sync-paket-1.log
  * </pre>
  */
 public final class LogFiles {
@@ -30,8 +29,8 @@ public final class LogFiles {
 
     /** Die beiden getrennten Protokollbereiche. */
     public enum Category {
-        CREATION("Paketerstellung", "erstellung"),
-        APPLY("Paketeinspielung", "einspielung");
+        CREATION("Paketerstellung", "Erstellung"),
+        APPLY("Paketeinspielung", "Einspielung");
 
         private final String label;
         private final String directoryName;
@@ -62,7 +61,7 @@ public final class LogFiles {
     }
 
     public static Path defaultBaseDir() {
-        return Paths.get(System.getProperty("user.home"), ".synchronizetool", "logs");
+        return ToolDirectories.logfilesDir();
     }
 
     public Path baseDir() {

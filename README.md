@@ -1,4 +1,4 @@
-# SynchronizeTool (Version 0.5.0)
+# SynchronizeTool (Version 0.6.0)
 
 Kleines Java/Swing-Werkzeug, um ausgewählte Dateien und Verzeichnisse von Rechner 1 auf
 Rechner 2 zu übertragen. Vor dem Überschreiben wird der vorhandene Stand auf Rechner 2
@@ -19,24 +19,42 @@ Stände wirklich identisch sind.
   Oberfläche auswählbar und einsehbar
 - **Gespeicherte Konfigurationen**: nach einem Neustart wieder auswählen und laden
 - **Pakete kombinieren**: mehrere Pakete zu einem Gesamtpaket zusammenführen
+- **Feste Programmordner** `Import`, `Export` und `Logfiles` mit mehreren benannten
+  Paketen sowie Auswahl der vorhandenen Pakete über Dropdowns
 - SHA-256-Prüfung nach dem Kopieren
 
 ## Grundidee
 
-Das Tool arbeitet mit einem transportablen Paket:
+Das Tool arbeitet mit benannten Paketordnern. Neben der Jar-Datei liegen feste
+Programmordner:
 
-```
-SyncTool-Paket/
-├── config.txt          # ausgewählte Pfade + Ausschlussmuster
-└── payload/            # 1:1-Kopie der ausgewählten Daten
-    ├── HOME/.config/meinprogramm/...
-    └── C/ProgramData/meinprogramm/settings.ini   (Beispiel Windows)
+```text
+SynchronizeTool/
+├── synchronize-tool-0.6.0.jar
+├── Export/
+│   ├── Paket1/
+│   │   ├── config.txt      # ausgewählte Pfade + Ausschlussmuster
+│   │   └── payload/        # 1:1-Kopie der ausgewählten Daten
+│   ├── Paket2/
+│   └── JavaPaket/
+├── Import/
+│   └── JavaPaket/          # von Rechner 1 hierher kopiert
+└── Logfiles/
+    ├── Erstellung/
+    └── Einspielung/
 ```
 
-**Rechner 1 (Quelle):** Dateien/Verzeichnisse auswählen → `Paket erstellen`.  
-**Transport:** Ordner per USB-Stick/Netzlaufwerk kopieren – oder im Reiter „Netzwerk“
-direkt freigeben.  
-**Rechner 2 (Ziel):** Paketverzeichnis wählen → `Vorschau` und/oder `Synchronisieren`.
+- **Rechner 1 (Quelle):** Paket in `Export` wählen oder neu anlegen, Daten auswählen →
+  `Paket erstellen`.
+- **Transport:** den gewünschten Paketordner aus `Export` in den Ordner `Import` auf
+  Rechner 2 kopieren – oder im Reiter „Netzwerk“ direkt freigeben.
+- **Rechner 2 (Ziel):** Paket in `Import` auswählen → `Vorschau` und/oder
+  `Synchronisieren`.
+
+Das Programmverzeichnis ist der Ordner der laufenden Jar-Datei. Wird das Tool aus einer
+IDE gestartet, gilt das aktuelle Arbeitsverzeichnis. `Import`, `Export` und `Logfiles`
+werden beim Start automatisch angelegt. Für den echten Einsatz sollte die Jar-Datei in
+einem eigenen, beschreibbaren Ordner liegen.
 
 Beim Einspielen passiert Folgendes – abhängig vom gewählten **Kopiermodus**:
 
@@ -61,23 +79,28 @@ die Pfade auf beiden Rechnern gleich sein.
 
 ### Reiter „Quelle“
 
-1. Unter **Paketverzeichnis** steht standardmäßig `~/SyncTool-Paket`. Hier kann ein Pfad
-   auf einem USB-Stick oder Netzlaufwerk angegeben werden.
-2. Mit **Datei hinzufügen** bzw. **Verzeichnis hinzufügen** die gewünschten Daten
+1. Unter **Paket in Export** steht das aktuell gewählte Paket. Das Dropdown listet alle
+   vollständigen Pakete unter `Export`. **Laden** übernimmt die zugehörige
+   Konfiguration nach einer Sicherheitsabfrage; **Aktualisieren** liest die Liste neu ein.
+2. Das Feld **Paketverzeichnis** zeigt den vollständigen Pfad. Über **...** lässt sich
+   auch ein Paket außerhalb von `Export` wählen. Der übergeordnete Ordner `Export`
+   selbst kann nicht als Paket verwendet werden.
+3. Mit **Datei hinzufügen** bzw. **Verzeichnis hinzufügen** die gewünschten Daten
    auswählen. Doppelte und verschachtelte Auswahlen werden automatisch bereinigt.
-3. **Ausschlüsse...** öffnet die Musterverwaltung (siehe unten).
-4. **Konfiguration speichern...** schreibt nur die `config.txt` (z. B. zum Ablegen unter
+4. **Ausschlüsse...** öffnet die Musterverwaltung (siehe unten).
+5. **Konfiguration speichern...** schreibt nur die `config.txt` (z. B. zum Ablegen unter
    Versionskontrolle). Ist bereits eine Konfiguration geladen oder gespeichert, wird
    genau diese Datei vorgeschlagen; sonst `synctool-config.txt`.
-   **Paket erstellen (Export)** schreibt die `config.txt` *und* kopiert alle Daten in
-   `payload/`. Beim erneuten Export wird der alte Payload eines Eintrags vollständig
-   ersetzt, damit kein alter Rest übrig bleibt.
-5. **Neues Paket...** legt ein weiteres Paket an einem frei wählbaren Speicherort an.
+6. **Paket erstellen (Export)** schreibt die `config.txt` *und* kopiert alle Daten in
+   `payload/`. Existiert das Paket bereits, wird nach Bestätigung der komplette
+   Paketordner geleert und neu geschrieben, damit keine alten Payload-Reste übrig
+   bleiben.
+7. **Neues Paket...** fragt nur den Paketnamen ab und legt `Export/<Paketname>` an.
    Optional wird die aktuelle Auswahl übernommen; ohne Häkchen startet das neue Paket
-   leer (die Ausschlussmuster bleiben erhalten). Das bisherige Paket bleibt unverändert.
-   So lassen sich mehrere Pakete parallel pflegen, z. B. eines pro Anwendung. Der
-   Paketname darf keine Pfadtrenner oder Sonderzeichen enthalten; ein bereits
-   vorhandener Name wird abgelehnt.
+   leer (die Ausschlussmuster bleiben erhalten). So lassen sich mehrere Pakete parallel
+   pflegen, z. B. `Paket1`, `Paket2` oder `JavaPaket`. Der Paketname darf keine
+   Pfadtrenner oder Sonderzeichen enthalten; ein bereits vorhandener Name wird
+   abgelehnt.
 
 ### Gespeicherte Konfigurationen
 
@@ -108,9 +131,10 @@ Sie enthält maximal 25 Einträge, doppelte Pfade werden zusammengefasst. Fehlt 
 markiert.
 
 Beim Laden gilt: Heißt die Datei `config.txt`, wird ihr Ordner als Paketverzeichnis
-verwendet. Bei einem anderen Dateinamen wird als Paketverzeichnis `~/SyncTool-Paket`
-eingetragen und ein Hinweis ins Protokoll geschrieben – so bleibt eine separat
-abgelegte Konfiguration nutzbar, ohne ein bestehendes Paket zu überschreiben.
+verwendet. Bei einem anderen Dateinamen wird das erste Paket in `Export` – oder der
+Ordner `Export` selbst, wenn noch kein Paket vorhanden ist – eingetragen und ein Hinweis
+ins Protokoll geschrieben. So bleibt eine separat abgelegte Konfiguration nutzbar, ohne
+ein bestehendes Paket zu überschreiben.
 
 ### Mehrere Pakete kombinieren
 
@@ -122,8 +146,8 @@ zu einem Gesamtpaket zusammenführen, zum Beispiel Paket 1, 3 und 5.
 2. Rechts die Reihenfolge festlegen: Das **oberste** Paket hat Vorrang, wenn dieselbe
    Datei in mehreren Paketen vorkommt. **Nach oben** bzw. **Nach unten** ändert die
    Reihenfolge.
-3. Paketname und Speicherort für das Gesamtpaket wählen. Ein bereits vorhandenes
-   Zielverzeichnis wird nicht überschrieben.
+3. Nur den Paketnamen für das Gesamtpaket wählen. Es wird als `Export/<Paketname>`
+   angelegt; ein bereits vorhandenes Zielverzeichnis wird nicht überschrieben.
 4. **OK** erzeugt `config.txt` und `payload/` des Gesamtpakets.
 
 Dabei gilt:
@@ -143,16 +167,22 @@ Dabei gilt:
 
 ### Reiter „Ziel“
 
-1. Paketverzeichnis auswählen.
-2. **Konfiguration anzeigen** zeigt die Pfade und ihre Auflösung auf diesem Rechner.
-3. Unter **Kopiermodus** wählen:
+1. Unter **Paket in Import** das gewünschte Paket auswählen. Das Dropdown listet alle
+   vollständigen Pakete unter `Import`; die Auswahl setzt das Paketverzeichnis und zeigt
+   die Konfiguration an. **Aktualisieren** liest die Liste neu ein, z. B. nachdem ein
+   Paketordner manuell nach `Import` kopiert wurde.
+2. Das Feld **Paketverzeichnis** zeigt den vollständigen Pfad. Über **...** lässt sich
+   auch ein Paket außerhalb von `Import` wählen. Der übergeordnete Ordner `Import`
+   selbst kann nicht eingespielt werden.
+3. **Konfiguration anzeigen** zeigt die Pfade und ihre Auflösung auf diesem Rechner.
+4. Unter **Kopiermodus** wählen:
    - **Nur geänderte Dateien** (Standard): kopiert nur neue und geänderte Dateien.
    - **Alles ersetzen**: sichert und kopiert jeden Eintrag vollständig.
    Die Auswahl wird gespeichert und gilt auch für **Herunterladen & Synchronisieren**
    im Netzwerk-Reiter.
-4. **Vorschau (Dry Run)** vergleicht, ohne etwas zu verändern.
-5. **Synchronisieren (Sicherung + Kopieren)** führt den Abgleich aus.
-6. **Letzte Synchronisation rückgängig machen** spielt die Sicherungen des letzten
+5. **Vorschau (Dry Run)** vergleicht, ohne etwas zu verändern.
+6. **Synchronisieren (Sicherung + Kopieren)** führt den Abgleich aus.
+7. **Letzte Synchronisation rückgängig machen** spielt die Sicherungen des letzten
    Laufs zurück.
 
 Alle Schritte erscheinen im Protokoll unten. Zusätzlich wird für jeden Vorgang eine
@@ -192,9 +222,9 @@ vorausgewählt.
 Für Paketerstellung und Paketeinspielung werden getrennte Protokolle geschrieben:
 
 ```text
-~/.synchronizetool/logs/
-├── erstellung/     # Paket erstellen, neues Paket, kombinieren, freigeben
-└── einspielung/    # Vorschau, Synchronisieren, Rollback, Netzwerk-Einspielung
+<Programmordner>/Logfiles/
+├── Erstellung/     # Paket erstellen, neues Paket, kombinieren, freigeben
+└── Einspielung/    # Vorschau, Synchronisieren, Rollback, Netzwerk-Einspielung
 ```
 
 - Jeder Vorgang erhält eine eigene Datei nach dem Muster
@@ -208,6 +238,14 @@ Für Paketerstellung und Paketeinspielung werden getrennte Protokolle geschriebe
 - Im Reiter **Protokolle** lässt sich der Bereich wählen, die Dateien werden neueste
   zuerst aufgelistet und der Inhalt schreibgeschützt angezeigt. **Aktualisieren** liest
   die Liste neu ein, **Logordner öffnen** zeigt den Ordner im Dateimanager.
+
+Benutzerspezifische Zustände bleiben weiterhin unter `~/.synchronizetool` und werden
+nicht mit dem Programmordner kopiert: `settings.txt` (Kopiermodus),
+`recent-configs.txt` (zuletzt verwendete Konfigurationen) und `last-sync.txt`
+(Rollback-Informationen).
+
+Bestehende Pakete und Protokolle an den alten Speicherorten werden nicht automatisch
+verschoben.
 
 ## Ausschlussmuster
 
@@ -272,8 +310,10 @@ Wenn beide Rechner im selben LAN sind, kann das Paket direkt übertragen werden.
 ### Rechner 1
 
 1. Im Reiter **Netzwerk** einen Port wählen (Standard `8765`).
-2. **Paket erstellen & freigeben** klicken. Das Tool exportiert das Paket und startet
-   einen kleinen HTTP-Server. Die angezeigte URL enthält einen zufälligen Token.
+2. **Paket erstellen & freigeben** klicken. Das Tool exportiert das aktuell in „Quelle“
+   gewählte Paket – ein vorhandenes Paket wird nach Bestätigung vollständig ersetzt –
+   und startet einen kleinen HTTP-Server. Die angezeigte URL enthält einen zufälligen
+   Token.
 3. URL kopieren oder auf Rechner 2 abtippen.
 
 ### Rechner 2
@@ -282,8 +322,10 @@ Wenn beide Rechner im selben LAN sind, kann das Paket direkt übertragen werden.
 2. **Nur herunterladen**, **Herunterladen & Vorschau** oder
    **Herunterladen & Synchronisieren** wählen. Für das Einspielen gilt derselbe
    Kopiermodus, der im Reiter „Ziel“ ausgewählt ist.
-3. Das Paket wird nach `~/SyncTool-Download` geladen und kann auch im Reiter „Ziel“
-   weiterverwendet werden.
+3. Das Paket wird standardmäßig nach `Import/Netzwerkpaket-<Zeitstempel>` geladen.
+   Ein anderer Paketordner kann im Feld **Paketordner** gewählt werden; vorhandene
+   Ordner werden nach Bestätigung ersetzt. Anschließend steht das Paket auch im
+   Reiter „Ziel“ zur Auswahl.
 
 Der Token schützt vor versehentlichem Zugriff, die Übertragung ist aber **unverschlüsselt
 (HTTP)**. Nur in vertrauenswürdigen Netzen verwenden. Bei Bedarf muss der Port in der
@@ -311,7 +353,7 @@ Voraussetzung: JDK 17 oder neuer.
 
 ```bash
 mvn package
-java -jar target/synchronize-tool-0.5.0.jar
+java -jar target/synchronize-tool-0.6.0.jar
 ```
 
 Ohne Maven geht es auch direkt:
