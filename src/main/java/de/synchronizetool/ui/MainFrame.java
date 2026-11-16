@@ -61,6 +61,10 @@ import java.util.List;
 /** Hauptfenster mit Reitern für Quelle, Ziel und Netzwerk. */
 public final class MainFrame extends JFrame {
 
+    private static final String VERSION = "0.5.0";
+    private static final String RELEASE_DATE = "16.11.2026";
+    private static final String VERSION_TEXT = "v." + VERSION + " vom " + RELEASE_DATE;
+
     private final SyncConfig sourceConfig = new SyncConfig();
     private SyncConfig targetConfig;
 
@@ -103,7 +107,7 @@ public final class MainFrame extends JFrame {
     private final PackageServer packageServer = new PackageServer(this::log);
 
     public MainFrame() {
-        super("SynchronizeTool 0.5.0");
+        super("SynchronizeTool");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
 
@@ -113,7 +117,7 @@ public final class MainFrame extends JFrame {
         tabs.addTab("Netzwerk", buildNetworkPanel());
         tabs.addTab("Protokolle", buildLogFilesPanel());
         add(tabs, BorderLayout.CENTER);
-        add(buildLogPanel(), BorderLayout.SOUTH);
+        add(buildFooter(), BorderLayout.SOUTH);
 
         addWindowListener(new WindowAdapter() {
             @Override
@@ -126,6 +130,7 @@ public final class MainFrame extends JFrame {
         setLocationRelativeTo(null);
         refreshRecentConfigs();
         refreshLogFiles(null);
+        log("SynchronizeTool " + VERSION_TEXT + " gestartet.");
         log("Bereit. Quelle: Daten auswählen und Paket erstellen. Ziel: Vorschau oder Synchronisieren."
                 + " Netzwerk: Paket direkt im LAN übertragen.");
         if (!recentConfigs.entries().isEmpty()) {
@@ -1291,6 +1296,18 @@ public final class MainFrame extends JFrame {
             JOptionPane.showMessageDialog(this, "Logordner:\n" + directory,
                     "Logordner", JOptionPane.INFORMATION_MESSAGE);
         }
+    }
+
+    private JPanel buildFooter() {
+        JPanel footer = new JPanel(new BorderLayout(0, 2));
+        footer.add(buildLogPanel(), BorderLayout.CENTER);
+
+        JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
+        JLabel versionLabel = new JLabel(VERSION_TEXT);
+        versionLabel.setFont(versionLabel.getFont().deriveFont(Font.PLAIN, 11f));
+        statusBar.add(versionLabel);
+        footer.add(statusBar, BorderLayout.SOUTH);
+        return footer;
     }
 
     private JPanel buildLogPanel() {
