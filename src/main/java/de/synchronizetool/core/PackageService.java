@@ -3,7 +3,6 @@ package de.synchronizetool.core;
 import de.synchronizetool.model.SyncConfig;
 import de.synchronizetool.model.SyncEntry;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.FileVisitResult;
@@ -19,11 +18,15 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /**
  * Erzeugt ein transportables Paket, vergleicht es mit dem Ziel (Dry Run) und spielt es
@@ -41,11 +44,31 @@ public final class PackageService {
     public static final String PAYLOAD_DIR = "payload";
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
+    private static final Pattern BACKUP_NAME =
+            Pattern.compile(".*_\\d{8}_\\d{6}(_\\d+)?");
     private static final StandardCopyOption[] COPY_OPTIONS = {
             StandardCopyOption.REPLACE_EXISTING,
             StandardCopyOption.COPY_ATTRIBUTES
     };
     private static final int MAX_DETAIL_LINES = 20;
+
+    /** Wie das Paket auf dem Zielrechner eingespielt wird. */
+    public enum CopyMode {
+        /** Nur neue und geänderte Dateien schreiben, nicht mehr vorhandene Dateien sichern. */
+        CHANGED_ONLY("Nur geänderte Dateien"),
+        /** Jeden Eintrag vollständig sichern und neu kopieren. */
+        REPLACE_ALL("Alles ersetzen");
+
+        private final String label;
+
+        CopyMode(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+    }
 
     private final Consumer<String> log;
     private final RollbackService rollback;
@@ -174,12 +197,9 @@ public final class PackageService {
                 continue;
             }
 
-            Map<String, String> payloadFiles = fingerprints(source);
+            Map<String, String> payloadFiles = fingerprints(source, matcher);
             Map<String, String> targetFiles = Files.isDirectory(target)
-                    ? fingerprints(target) : new TreeMap<>();
-            if (!matcher.isEmpty()) {
-                targetFiles.keySet().removeIf(relative -> matcher.matches(toPath(relative)));
-            }
+                    ? fingerprints(target, matcher) : new TreeMap<>();
 
             List<String> added = new ArrayList<>();
             List<String> modified = new ArrayList<>();
@@ -224,14 +244,27 @@ public final class PackageService {
     }
 
     /**
-     * Spielt das Paket auf diesem Rechner ein: erst Sicherung mit Timestamp, dann Kopie,
-     * danach Prüfung per SHA-256. Ausschlussmuster werden im Ziel unangetastet gelassen.
+     * Spielt das Paket auf diesem Rechner ein. Ohne Angabe eines Modus wird wie bisher
+     * vollständig ersetzt.
      */
     public void apply(SyncConfig config, Path packageDir) throws IOException {
+        apply(config, packageDir, CopyMode.REPLACE_ALL);
+    }
+
+    /**
+     * Spielt das Paket auf diesem Rechner ein.
+     *
+     * <p>Bei {@link CopyMode#REPLACE_ALL} wird jeder Eintrag als Ganzes gesichert und neu
+     * kopiert. Bei {@link CopyMode#CHANGED_ONLY} werden nur neue und geänderte Dateien
+     * geschrieben, unveränderte Dateien übersprungen und nicht mehr vorhandene Dateien
+     * mit Sicherung entfernt. Ausschlussmuster bleiben in beiden Modi unangetastet.</p>
+     */
+    public void apply(SyncConfig config, Path packageDir, CopyMode mode) throws IOException {
         Path payload = requirePayload(packageDir);
         ExcludeMatcher matcher = new ExcludeMatcher(config.excludes());
         String timestamp = LocalDateTime.now().format(TIMESTAMP);
         log.accept("Einspielen gestartet, Sicherungs-Timestamp: " + timestamp);
+        log.accept("Kopiermodus: " + mode.label());
 
         RollbackService.Recorder recorder = null;
         try {
@@ -240,6 +273,7 @@ public final class PackageService {
             log.accept("Hinweis: Rollback-Protokoll konnte nicht angelegt werden: " + e.getMessage());
         }
 
+        ApplyContext context = new ApplyContext(recorder, timestamp, matcher);
         int ok = 0;
         int failed = 0;
         try {
@@ -250,31 +284,15 @@ public final class PackageService {
                     if (!Files.exists(source)) {
                         throw new IOException("Daten fehlen im Paket: " + source);
                     }
-                    Path backup = null;
-                    if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                        backup = FileOps.uniqueSibling(target, timestamp);
-                        Files.move(target, backup);
-                        recordRestore(recorder, target, backup);
-                        log.accept("Sicherung: " + target + "  ->  " + backup.getFileName());
+                    if (mode == CopyMode.REPLACE_ALL) {
+                        applyReplaceAll(entry, source, target, context);
+                    } else if (entry.kind() == SyncEntry.Kind.FILE) {
+                        applyChangedFile(source, target, context);
                     } else {
-                        recordDelete(recorder, target);
+                        applyChangedDirectory(source, target, context);
                     }
 
-                    if (entry.kind() == SyncEntry.Kind.DIRECTORY) {
-                        Files.createDirectories(target);
-                        copyTree(source, target);
-                        if (backup != null) {
-                            restoreExcluded(backup, target, matcher);
-                        }
-                    } else {
-                        Path parent = target.getParent();
-                        if (parent != null) {
-                            Files.createDirectories(parent);
-                        }
-                        copyFile(source, target);
-                    }
-
-                    if (matches(entry, source, target, matcher)) {
+                    if (matchesEntry(entry, source, target, matcher)) {
                         ok++;
                         log.accept("OK        " + target);
                     } else {
@@ -298,6 +316,272 @@ public final class PackageService {
         log.accept("Einspielen beendet: " + ok + " ok, " + failed + " mit Hinweis/Fehler.");
         if (ok > 0) {
             log.accept("Rollback möglich mit \"Letzte Synchronisation rückgängig machen\".");
+        }
+    }
+
+    /** Bisheriges Verhalten: Eintrag komplett sichern und neu kopieren. */
+    private void applyReplaceAll(SyncEntry entry, Path source, Path target, ApplyContext context)
+            throws IOException {
+        Path backup = null;
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            backup = FileOps.uniqueSibling(target, context.timestamp);
+            Files.move(target, backup);
+            context.recordRestore(target, backup);
+            log.accept("Sicherung: " + target + "  ->  " + backup.getFileName());
+        } else {
+            context.recordDelete(target);
+        }
+
+        if (entry.kind() == SyncEntry.Kind.DIRECTORY) {
+            Files.createDirectories(target);
+            copyTree(source, target);
+            if (backup != null) {
+                restoreExcluded(backup, target, context.matcher);
+            }
+        } else {
+            Path parent = target.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            copyFile(source, target);
+        }
+    }
+
+    /** Inkrementell: einzelne Datei nur kopieren, wenn sie neu oder anders ist. */
+    private void applyChangedFile(Path source, Path target, ApplyContext context) throws IOException {
+        boolean exists = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
+        if (exists) {
+            if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) && sameFile(source, target)) {
+                log.accept("GLEICH    " + target);
+                return;
+            }
+            Path backup = FileOps.uniqueSibling(target, context.timestamp);
+            Files.move(target, backup);
+            context.recordRestore(target, backup);
+            log.accept("Sicherung: " + target + "  ->  " + backup.getFileName());
+        }
+        ensureDirectory(target.getParent(), context);
+        if (!exists) {
+            context.recordDelete(target);
+        }
+        copyFile(source, target);
+        log.accept("KOPIERT   " + target);
+    }
+
+    /** Inkrementell: Verzeichnis dateiweise abgleichen, Überzähliges sichern und entfernen. */
+    private void applyChangedDirectory(Path source, Path target, ApplyContext context) throws IOException {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+            Path backup = FileOps.uniqueSibling(target, context.timestamp);
+            Files.move(target, backup);
+            context.recordRestore(target, backup);
+            log.accept("Sicherung: " + target + "  ->  " + backup.getFileName());
+        }
+        ensureDirectory(target, context);
+
+        // Zuerst Überzähliges entfernen, damit neu angelegte Sicherungen nicht als
+        // überzählig gelten und keine Verzeichnisse mit frischen Sicherungen verschoben werden.
+        int removed = removeExtraEntries(source, target, context);
+        TreeStats stats = syncTree(source, target, context);
+        if (stats.copied + removed == 0) {
+            log.accept("GLEICH    " + target + "  (" + stats.unchanged + " Dateien unverändert)");
+        } else {
+            log.accept("ABGLEICH  " + target + "  (" + stats.copied + " kopiert, "
+                    + stats.unchanged + " unverändert, " + removed + " entfernt)");
+        }
+    }
+
+    /** Kopiert fehlende/geänderte Dateien aus dem Payload in das bestehende Zielverzeichnis. */
+    private TreeStats syncTree(Path source, Path target, ApplyContext context) throws IOException {
+        int[] copied = {0};
+        int[] unchanged = {0};
+        Files.walkFileTree(source, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                Path relative = source.relativize(dir);
+                if (!relative.toString().isEmpty() && context.matcher.matches(relative)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                Path destination = target.resolve(relative.toString());
+                if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)
+                        && !Files.isDirectory(destination, LinkOption.NOFOLLOW_LINKS)) {
+                    Path backup = FileOps.uniqueSibling(destination, context.timestamp);
+                    Files.move(destination, backup);
+                    context.recordRestore(destination, backup);
+                    log.accept("Sicherung: " + destination + "  ->  " + backup.getFileName());
+                }
+                ensureDirectory(destination, context);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Path relative = source.relativize(file);
+                if (context.matcher.matches(relative)) {
+                    return FileVisitResult.CONTINUE;
+                }
+                if (attrs.isSymbolicLink()) {
+                    log.accept("Hinweis: symbolischer Link übersprungen: " + file);
+                    return FileVisitResult.CONTINUE;
+                }
+                Path destination = target.resolve(relative.toString());
+                if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+                    if (Files.isDirectory(destination, LinkOption.NOFOLLOW_LINKS)) {
+                        Path backup = FileOps.uniqueSibling(destination, context.timestamp);
+                        Files.move(destination, backup);
+                        context.recordRestore(destination, backup);
+                        log.accept("Sicherung: " + destination + "  ->  " + backup.getFileName());
+                    } else if (sameFile(file, destination)) {
+                        unchanged[0]++;
+                        return FileVisitResult.CONTINUE;
+                    } else {
+                        Path backup = FileOps.uniqueSibling(destination, context.timestamp);
+                        Files.move(destination, backup);
+                        context.recordRestore(destination, backup);
+                        log.accept("Sicherung: " + destination + "  ->  " + backup.getFileName());
+                    }
+                } else {
+                    ensureDirectory(destination.getParent(), context);
+                    context.recordDelete(destination);
+                }
+                copyFile(file, destination);
+                copied[0]++;
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException e) {
+                log.accept("Hinweis: übersprungen " + file + " (" + e.getMessage() + ")");
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return new TreeStats(copied[0], unchanged[0]);
+    }
+
+    /**
+     * Entfernt Dateien und leere Verzeichnisse, die im Ziel vorhanden sind, aber nicht
+     * im Payload. Vorher werden sie mit Timestamp gesichert, damit der Rollback sie
+     * zurückholen kann. Ausgeschlossene Pfade bleiben unangetastet.
+     */
+    private int removeExtraEntries(Path source, Path target, ApplyContext context) throws IOException {
+        Set<Path> expected = new LinkedHashSet<>();
+        Files.walkFileTree(source, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                Path relative = source.relativize(dir);
+                if (!relative.toString().isEmpty() && context.matcher.matches(relative)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                expected.add(relative);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                Path relative = source.relativize(file);
+                if (!context.matcher.matches(relative) && !attrs.isSymbolicLink()) {
+                    expected.add(relative);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+
+        List<Path> existing;
+        try (var walk = Files.walk(target)) {
+            existing = walk.toList();
+        }
+
+        List<Path> removedRoots = new ArrayList<>();
+        int removed = 0;
+        for (Path path : existing) {
+            Path relative = target.relativize(path);
+            if (relative.toString().isEmpty() || context.matcher.matches(relative)) {
+                continue;
+            }
+            if (hasBackupComponent(relative)) {
+                continue; // Sicherung eines früheren Laufs nicht erneut verschieben
+            }
+            if (expected.contains(relative)) {
+                continue;
+            }
+            if (removedRoots.stream().anyMatch(root -> path.startsWith(root) && !path.equals(root))) {
+                continue; // liegt in einem bereits entfernten Verzeichnis
+            }
+            if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)
+                    && containsExcluded(path, target, context.matcher)) {
+                continue; // ausgeschlossene Inhalte bleiben; Kinder werden einzeln geprüft
+            }
+            Path backup = FileOps.uniqueSibling(path, context.timestamp);
+            Files.move(path, backup);
+            context.recordRestore(path, backup);
+            log.accept("ENTFERNT  " + path + "  ->  " + backup.getFileName());
+            removedRoots.add(path);
+            removed++;
+        }
+        return removed;
+    }
+
+    /** Prüft, ob unterhalb von {@code directory} ein ausgeschlossener Pfad liegt. */
+    private boolean containsExcluded(Path directory, Path target, ExcludeMatcher matcher) throws IOException {
+        try (var walk = Files.walk(directory)) {
+            for (Path path : (Iterable<Path>) walk::iterator) {
+                Path relative = target.relativize(path);
+                if (!relative.toString().isEmpty() && matcher.matches(relative)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Legt ein Verzeichnis samt fehlender Eltern an und merkt neu angelegte Pfade für den Rollback. */
+    private void ensureDirectory(Path directory, ApplyContext context) throws IOException {
+        if (directory == null || Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        Path parent = directory.getParent();
+        if (parent != null && !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) {
+            ensureDirectory(parent, context);
+        }
+        if (Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Pfad ist eine Datei, Verzeichnis erwartet: " + directory);
+            }
+            return;
+        }
+        Files.createDirectories(directory);
+        context.recordDelete(directory);
+        log.accept("Verzeichnis angelegt: " + directory);
+    }
+
+    private record TreeStats(int copied, int unchanged) {
+    }
+
+    /** Merkt sich Sicherungen und neu angelegte Pfade für das Rollback-Protokoll. */
+    private final class ApplyContext {
+
+        private final RollbackService.Recorder recorder;
+        private final String timestamp;
+        private final ExcludeMatcher matcher;
+        private final Set<Path> recordedRestores = new HashSet<>();
+        private final Set<Path> recordedDeletes = new HashSet<>();
+
+        private ApplyContext(RollbackService.Recorder recorder, String timestamp, ExcludeMatcher matcher) {
+            this.recorder = recorder;
+            this.timestamp = timestamp;
+            this.matcher = matcher;
+        }
+
+        private void recordRestore(Path target, Path backup) {
+            if (recordedRestores.add(target)) {
+                PackageService.this.recordRestore(recorder, target, backup);
+            }
+        }
+
+        private void recordDelete(Path target) {
+            if (recordedDeletes.add(target)) {
+                PackageService.this.recordDelete(recorder, target);
+            }
         }
     }
 
@@ -443,21 +727,15 @@ public final class PackageService {
         }
     }
 
-    private boolean matches(SyncEntry entry, Path source, Path target, ExcludeMatcher matcher) throws IOException {
+    private boolean matchesEntry(SyncEntry entry, Path source, Path target, ExcludeMatcher matcher)
+            throws IOException {
         if (entry.kind() == SyncEntry.Kind.FILE) {
             return sameFile(source, target);
         }
-        if (!Files.isDirectory(target)) {
+        if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
             return false;
         }
-        Map<String, String> expected = fingerprints(source);
-        Map<String, String> actual = fingerprints(target);
-        for (Map.Entry<String, String> file : expected.entrySet()) {
-            if (!file.getValue().equals(actual.get(file.getKey()))) {
-                return false;
-            }
-        }
-        return true;
+        return fingerprints(source, matcher).equals(fingerprints(target, matcher));
     }
 
     private boolean sameFile(Path source, Path target) throws IOException {
@@ -468,13 +746,41 @@ public final class PackageService {
 
     /** Relativer Pfad (mit /) + Hash jeder Datei, sortiert. */
     private Map<String, String> fingerprints(Path root) throws IOException {
+        return fingerprints(root, ExcludeMatcher.empty(), true);
+    }
+
+    /** Wie {@link #fingerprints(Path)}, ignoriert aber ausgeschlossene Pfade. */
+    private Map<String, String> fingerprints(Path root, ExcludeMatcher matcher) throws IOException {
+        return fingerprints(root, matcher, true);
+    }
+
+    /**
+     * Relativer Pfad (mit /) + Hash jeder Datei, sortiert. Mit {@code ignoreBackups}
+     * werden Sicherungen des Werkzeugs (Name mit Timestamp) nicht mitgezählt.
+     */
+    private Map<String, String> fingerprints(Path root, ExcludeMatcher matcher, boolean ignoreBackups)
+            throws IOException {
         Map<String, String> result = new TreeMap<>();
         Files.walkFileTree(root, new SimpleFileVisitor<>() {
             @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                Path relative = root.relativize(dir);
+                if (!relative.toString().isEmpty()
+                        && (matcher.matches(relative) || (ignoreBackups && isBackupName(dir)))) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Path relative = root.relativize(file);
+                if (matcher.matches(relative) || (ignoreBackups && isBackupName(file))) {
+                    return FileVisitResult.CONTINUE;
+                }
                 if (attrs.isRegularFile()) {
-                    String relative = root.relativize(file).toString().replace('\\', '/');
-                    result.put(relative, sha256(file));
+                    String key = relative.toString().replace('\\', '/');
+                    result.put(key, sha256(file));
                 }
                 return FileVisitResult.CONTINUE;
             }
@@ -482,8 +788,18 @@ public final class PackageService {
         return result;
     }
 
-    private static Path toPath(String relative) {
-        return Path.of(relative.replace('/', File.separatorChar));
+    private static boolean isBackupName(Path path) {
+        Path name = path.getFileName();
+        return name != null && BACKUP_NAME.matcher(name.toString()).matches();
+    }
+
+    private static boolean hasBackupComponent(Path relative) {
+        for (Path part : relative) {
+            if (isBackupName(part)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void logDetails(String prefix, List<String> items) {

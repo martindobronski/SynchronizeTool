@@ -6,7 +6,7 @@
 
   <groupId>de.synchronizetool</groupId>
   <artifactId>synchronize-tool</artifactId>
-  <version>0.3.0</version>
+  <version>0.5.0</version>
   <name>SynchronizeTool</name>
 
   <properties>

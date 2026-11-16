@@ -1,4 +1,4 @@
-# SynchronizeTool (Version 0.3.0)
+# SynchronizeTool (Version 0.5.0)
 
 Kleines Java/Swing-Werkzeug, um ausgewählte Dateien und Verzeichnisse von Rechner 1 auf
 Rechner 2 zu übertragen. Vor dem Überschreiben wird der vorhandene Stand auf Rechner 2
@@ -14,7 +14,11 @@ Stände wirklich identisch sind.
 - **Dry Run**: Vorschau der Änderungen, ohne etwas anzufassen
 - **Rollback**: letzte Synchronisation rückgängig machen
 - **Ausschlussmuster** (`.gitignore`-ähnlich), z. B. `*.log`, `node_modules`
+- **Kopiermodus wählbar**: nur geänderte Dateien oder alles ersetzen
+- **Getrennte Protokolldateien** für Paketerstellung und Paketeinspielung, in der
+  Oberfläche auswählbar und einsehbar
 - **Gespeicherte Konfigurationen**: nach einem Neustart wieder auswählen und laden
+- **Pakete kombinieren**: mehrere Pakete zu einem Gesamtpaket zusammenführen
 - SHA-256-Prüfung nach dem Kopieren
 
 ## Grundidee
@@ -34,11 +38,13 @@ SyncTool-Paket/
 direkt freigeben.  
 **Rechner 2 (Ziel):** Paketverzeichnis wählen → `Vorschau` und/oder `Synchronisieren`.
 
-Beim Einspielen passiert Folgendes:
+Beim Einspielen passiert Folgendes – abhängig vom gewählten **Kopiermodus**:
 
-1. Vorhandene Datei/Verzeichnis wird mit Timestamp umbenannt:
+1. Vorhandene Datei/Verzeichnis wird mit Timestamp gesichert:
    - `settings.ini` → `settings.ini_20261116_143000`
    - `meinprogramm/` → `meinprogramm_20261116_143000/`
+   - im Modus **Nur geänderte Dateien** entsteht die Sicherung nur für tatsächlich
+     geänderte oder entfernte Dateien.
 2. Die neue Version aus `payload/` wird an denselben logischen Pfad kopiert.
 3. Per SHA-256 wird geprüft, ob die Inhalte übereinstimmen.
 
@@ -60,7 +66,9 @@ die Pfade auf beiden Rechnern gleich sein.
 2. Mit **Datei hinzufügen** bzw. **Verzeichnis hinzufügen** die gewünschten Daten
    auswählen. Doppelte und verschachtelte Auswahlen werden automatisch bereinigt.
 3. **Ausschlüsse...** öffnet die Musterverwaltung (siehe unten).
-4. **Konfiguration speichern...** schreibt nur die `config.txt`.
+4. **Konfiguration speichern...** schreibt nur die `config.txt` (z. B. zum Ablegen unter
+   Versionskontrolle). Ist bereits eine Konfiguration geladen oder gespeichert, wird
+   genau diese Datei vorgeschlagen; sonst `synctool-config.txt`.
    **Paket erstellen (Export)** schreibt die `config.txt` *und* kopiert alle Daten in
    `payload/`. Beim erneuten Export wird der alte Payload eines Eintrags vollständig
    ersetzt, damit kein alter Rest übrig bleibt.
@@ -80,7 +88,8 @@ enthält die zuletzt verwendeten `config.txt`-Dateien, die neueste zuerst.
 - **Laden** öffnet die markierte Konfiguration. Deren Dateien/Verzeichnisse und
   Ausschlussmuster ersetzen die aktuelle Auswahl; das passende Paketverzeichnis wird
   automatisch gesetzt. Anschließend lässt sich die Auswahl anpassen und das Paket über
-  **Paket erstellen (Export)** neu schreiben.
+  **Paket erstellen (Export)** neu schreiben. **Konfiguration speichern...** schlägt
+  dabei wieder dieselbe Datei vor.
 - **Öffnen...** wählt einen Paketordner oder eine `config.txt` direkt vom Dateisystem.
   Bei einem Ordner wird die darin liegende `config.txt` geladen.
 - **Aus Liste entfernen** blendet einen Eintrag nur aus der Liste aus; Dateien und
@@ -103,16 +112,102 @@ verwendet. Bei einem anderen Dateinamen wird als Paketverzeichnis `~/SyncTool-Pa
 eingetragen und ein Hinweis ins Protokoll geschrieben – so bleibt eine separat
 abgelegte Konfiguration nutzbar, ohne ein bestehendes Paket zu überschreiben.
 
+### Mehrere Pakete kombinieren
+
+Über **Pakete kombinieren...** im Reiter „Quelle“ lassen sich mehrere vorhandene Pakete
+zu einem Gesamtpaket zusammenführen, zum Beispiel Paket 1, 3 und 5.
+
+1. Links die gewünschten Pakete markieren und mit **Hinzufügen →** nach rechts
+   übernehmen. **Weitere...** ergänzt ein Paket, das nicht in der Liste steht.
+2. Rechts die Reihenfolge festlegen: Das **oberste** Paket hat Vorrang, wenn dieselbe
+   Datei in mehreren Paketen vorkommt. **Nach oben** bzw. **Nach unten** ändert die
+   Reihenfolge.
+3. Paketname und Speicherort für das Gesamtpaket wählen. Ein bereits vorhandenes
+   Zielverzeichnis wird nicht überschrieben.
+4. **OK** erzeugt `config.txt` und `payload/` des Gesamtpakets.
+
+Dabei gilt:
+
+- Verwendet werden nur vollständige Pakete mit `config.txt` und `payload/`.
+- Die Ausschlussmuster aller Pakete werden zusammengeführt und beim Zusammenbau
+  angewendet.
+- Gleichnamige Dateien aus dem obersten Paket überschreiben die Versionen darunter
+  liegender Pakete; jede Überschneidung mit unterschiedlichem Inhalt erscheint im
+  Protokoll.
+- Die Daten stammen aus den Payloads der vorhandenen Pakete. Die ursprünglichen
+  Quelldateien müssen nicht mehr existieren.
+- Widersprüchliche Strukturen – etwa eine Datei und ein Verzeichnis am selben Pfad –
+  werden mit einer Meldung abgelehnt.
+- Das fertige Gesamtpaket wird direkt im Quelle-Reiter geladen und kann wie jedes
+  andere Paket auf Rechner 2 über den Reiter „Ziel“ eingespielt werden.
+
 ### Reiter „Ziel“
 
 1. Paketverzeichnis auswählen.
 2. **Konfiguration anzeigen** zeigt die Pfade und ihre Auflösung auf diesem Rechner.
-3. **Vorschau (Dry Run)** vergleicht, ohne etwas zu verändern.
-4. **Synchronisieren (Sicherung + Kopieren)** führt den Abgleich aus.
-5. **Letzte Synchronisation rückgängig machen** spielt die Sicherungen des letzten
+3. Unter **Kopiermodus** wählen:
+   - **Nur geänderte Dateien** (Standard): kopiert nur neue und geänderte Dateien.
+   - **Alles ersetzen**: sichert und kopiert jeden Eintrag vollständig.
+   Die Auswahl wird gespeichert und gilt auch für **Herunterladen & Synchronisieren**
+   im Netzwerk-Reiter.
+4. **Vorschau (Dry Run)** vergleicht, ohne etwas zu verändern.
+5. **Synchronisieren (Sicherung + Kopieren)** führt den Abgleich aus.
+6. **Letzte Synchronisation rückgängig machen** spielt die Sicherungen des letzten
    Laufs zurück.
 
-Alle Schritte erscheinen im Protokoll unten.
+Alle Schritte erscheinen im Protokoll unten. Zusätzlich wird für jeden Vorgang eine
+Protokolldatei geschrieben (siehe [Protokolldateien](#protokolldateien)).
+
+### Kopiermodi im Detail
+
+**Nur geänderte Dateien** (Standard)
+
+- Jede Datei wird per Größe und SHA-256 mit dem Ziel verglichen. Identische Dateien
+  werden übersprungen; sie werden weder kopiert noch gesichert.
+- Neue Dateien werden angelegt, geänderte Dateien vorher mit Timestamp gesichert.
+- Dateien und leere Verzeichnisse, die im Ziel vorhanden sind, aber nicht mehr im
+  Paket, werden mit Timestamp gesichert und entfernt. So bleibt das Ergebnis 1:1.
+- Wird an einem Pfad der Typ gewechselt (Datei ↔ Verzeichnis), wird der alte Stand
+  gesichert und der neue Typ angelegt.
+- Ausgeschlossene Dateien und Verzeichnisse bleiben unangetastet.
+- Neu angelegte Verzeichnisse werden im Rollback-Protokoll vermerkt, damit der
+  Rollback sie wieder entfernen kann.
+- Sicherungen des Werkzeugs (`name_yyyyMMdd_HHmmss`) werden bei späteren Läufen
+  nicht als überzählige Dateien behandelt.
+
+**Alles ersetzen**
+
+- Jeder ausgewählte Eintrag wird als Ganzes mit Timestamp gesichert und anschließend
+  vollständig neu kopiert – auch wenn er bereits identisch ist.
+- Das entspricht dem bisherigen Verhalten und ist z. B. zum Auffrischen von
+  Attributen oder für kleine Datenmengen sinnvoll.
+
+In beiden Modi wird nach dem Kopieren per SHA-256 geprüft, ob der Zielstand dem
+Payload entspricht. Die gewählte Option wird unter
+`~/.synchronizetool/settings.txt` gespeichert und beim nächsten Start wieder
+vorausgewählt.
+
+## Protokolldateien
+
+Für Paketerstellung und Paketeinspielung werden getrennte Protokolle geschrieben:
+
+```text
+~/.synchronizetool/logs/
+├── erstellung/     # Paket erstellen, neues Paket, kombinieren, freigeben
+└── einspielung/    # Vorschau, Synchronisieren, Rollback, Netzwerk-Einspielung
+```
+
+- Jeder Vorgang erhält eine eigene Datei nach dem Muster
+  `<yyyyMMdd_HHmmss>_<vorgang>.log`; bei Namensgleichheit wird `_2`, `_3` usw.
+  angehängt.
+- Die Dateien sind UTF-8-kodiert und enthalten einen Kopf mit Bereich, Vorgang,
+  Zeitpunkt und Rechner sowie alle Meldungen des Laufs. Schreibfehler beim
+  Protokollieren brechen die Synchronisation nicht ab.
+- Nur herunterladen ohne Einspielen erzeugt kein Einspiel-Protokoll, weil dabei keine
+  Dateien im Ziel verändert werden.
+- Im Reiter **Protokolle** lässt sich der Bereich wählen, die Dateien werden neueste
+  zuerst aufgelistet und der Inhalt schreibgeschützt angezeigt. **Aktualisieren** liest
+  die Liste neu ein, **Logordner öffnen** zeigt den Ordner im Dateimanager.
 
 ## Ausschlussmuster
 
@@ -130,8 +225,10 @@ cache
 - Muster ohne `/` gelten für jedes Pfadsegment, `node_modules` also auch für
   `a/node_modules/x.js`.
 - Ausgeschlossene Dateien werden nicht ins Paket kopiert.
-- Beim Einspielen bleiben ausgeschlossene Dateien im Ziel erhalten: Sie werden aus der
-  Sicherung zurückgeholt, damit z. B. lokale Logs oder Cache-Dateien nicht verschwinden.
+- Beim Einspielen bleiben ausgeschlossene Dateien im Ziel erhalten: Im Modus
+  „Alles ersetzen“ werden sie aus der Sicherung zurückgeholt; im Modus „Nur geänderte
+  Dateien“ werden sie gar nicht erst angefasst. So verschwinden z. B. lokale Logs oder
+  Cache-Dateien nicht.
 
 ## Dry Run (Vorschau)
 
@@ -155,13 +252,18 @@ Nach jedem Einspiel-Lauf schreibt das Tool auf dem Zielrechner:
 ```
 
 Darin steht, welche Datei unter welchem Sicherungsnamen liegt (oder neu angelegt wurde).
+Im Modus „Alles ersetzen“ sind es die Sicherungen ganzer Einträge, im Modus „Nur
+geänderte Dateien“ die einzelnen geänderten bzw. entfernten Dateien und Verzeichnisse.
 **Letzte Synchronisation rückgängig machen** im Reiter „Ziel“:
 
 - Sicherungen werden an ihren ursprünglichen Platz zurückverschoben.
+- Neu angelegte Dateien und Verzeichnisse werden zur Seite gelegt.
 - Der aktuell vorhandene Stand wird nicht gelöscht, sondern mit dem Zusatz
   `_rollback_<Timestamp>` zur Seite gelegt.
 - Das Protokoll wird als `last-sync.txt.done_<Timestamp>` archiviert.
 - Ein zweites Rollback direkt hintereinander ist dadurch nicht möglich.
+- Das Rollback bezieht sich immer auf den letzten Einspiel-Lauf. Sicherungen früherer
+  Läufe bleiben erhalten.
 
 ## Netzwerkmodus
 
@@ -178,7 +280,8 @@ Wenn beide Rechner im selben LAN sind, kann das Paket direkt übertragen werden.
 
 1. Im Reiter **Netzwerk** die URL einfügen.
 2. **Nur herunterladen**, **Herunterladen & Vorschau** oder
-   **Herunterladen & Synchronisieren** wählen.
+   **Herunterladen & Synchronisieren** wählen. Für das Einspielen gilt derselbe
+   Kopiermodus, der im Reiter „Ziel“ ausgewählt ist.
 3. Das Paket wird nach `~/SyncTool-Download` geladen und kann auch im Reiter „Ziel“
    weiterverwendet werden.
 
@@ -208,7 +311,7 @@ Voraussetzung: JDK 17 oder neuer.
 
 ```bash
 mvn package
-java -jar target/synchronize-tool-0.3.0.jar
+java -jar target/synchronize-tool-0.5.0.jar
 ```
 
 Ohne Maven geht es auch direkt:
@@ -231,16 +334,15 @@ java -cp out de.synchronizetool.Main
 - **Symbolische Links** innerhalb eines Verzeichnisses werden übersprungen und mit einem
   Hinweis protokolliert. Ist der ausgewählte Pfad selbst ein Link, wird sein Ziel kopiert.
 - **Offene/gesperrte Dateien** (z. B. eine laufende Datenbank) können nicht kopiert werden.
-- **Kein differentieller Transfer:** Beim Export wird der komplette Payload neu
-  geschrieben, beim Import vollständig kopiert. Der Dry Run vergleicht zwar per Hash,
-  kopiert aber noch nicht inkrementell.
+- **Kein differentieller Export:** Beim Export wird der komplette Payload neu
+  geschrieben. Der Import kann wahlweise inkrementell erfolgen („Nur geänderte
+  Dateien“) oder alles ersetzen.
 - **Netzwerkmodus ist unverschlüsselt** und hat keine Benutzerverwaltung; gedacht für
   ein vertrauenswürdiges Heim-/Büro-LAN.
 - **Rollback** deckt den letzten Einspiel-Lauf ab, nicht beliebig viele Generationen.
 
 ## Sinnvolle nächste Schritte
 
-- Inkrementeller Abgleich: nur geänderte Dateien kopieren
 - Zeitgesteuerte oder automatische Synchronisation
 - Profile für mehrere Rechner-Paare
 - Verschlüsselte Netzwerkübertragung (HTTPS) und Authentifizierung
