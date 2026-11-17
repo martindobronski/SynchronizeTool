@@ -2,6 +2,7 @@ package de.synchronizetool.ui;
 
 import de.synchronizetool.core.FileOps;
 import de.synchronizetool.core.LogFiles;
+import de.synchronizetool.core.PackageArchive;
 import de.synchronizetool.core.PackageCombiner;
 import de.synchronizetool.core.PackageDownloader;
 import de.synchronizetool.core.PackageServer;
@@ -23,6 +24,7 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
@@ -52,6 +54,7 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -60,13 +63,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /** Hauptfenster mit Reitern für Quelle, Ziel und Netzwerk. */
 public final class MainFrame extends JFrame {
 
-    private static final String VERSION = "0.6.0";
-    private static final String RELEASE_DATE = "16.11.2026";
+    private static final String VERSION = "0.8.0";
+    private static final String RELEASE_DATE = "17.11.2026";
     private static final String VERSION_TEXT = "v." + VERSION + " vom " + RELEASE_DATE;
 
     private final SyncConfig sourceConfig = new SyncConfig();
@@ -76,8 +80,8 @@ public final class MainFrame extends JFrame {
     private final DefaultListModel<SyncEntry> targetModel = new DefaultListModel<>();
     private final JList<SyncEntry> sourceList = new JList<>(sourceModel);
     private final JList<SyncEntry> targetList = new JList<>(targetModel);
-    private final JTextField sourcePackageField = new JTextField(defaultExportPackageDir().toString());
-    private final JTextField targetPackageField = new JTextField(defaultImportPackageDir().toString());
+    private final JTextField sourcePackageField = new JTextField(defaultExportPackagePath().toString());
+    private final JTextField targetPackageField = new JTextField(defaultImportPackagePath().toString());
     private final JComboBox<Path> sourcePackageBox = new JComboBox<>();
     private final JComboBox<Path> targetPackageBox = new JComboBox<>();
     /** Verhindert, dass das Befüllen der Dropdowns Ladevorgänge auslöst. */
@@ -192,11 +196,11 @@ public final class MainFrame extends JFrame {
         top.add(Box.createVerticalStrut(4));
 
         JPanel fieldRow = new JPanel(new BorderLayout(6, 4));
-        fieldRow.add(new JLabel("Paketverzeichnis (diesen Ordner später auf Rechner 2 kopieren):"),
+        fieldRow.add(new JLabel("Paket-ZIP (diese Datei später nach Import auf Rechner 2 kopieren):"),
                 BorderLayout.NORTH);
         fieldRow.add(sourcePackageField, BorderLayout.CENTER);
         JButton choosePackage = new JButton("...");
-        choosePackage.addActionListener(e -> chooseDirectory(sourcePackageField));
+        choosePackage.addActionListener(e -> choosePackagePath(sourcePackageField));
         fieldRow.add(choosePackage, BorderLayout.EAST);
         top.add(fieldRow);
 
@@ -276,16 +280,15 @@ public final class MainFrame extends JFrame {
     private void combinePackages() {
         DefaultListModel<Path> availableModel = new DefaultListModel<>();
         Set<Path> knownPackages = new LinkedHashSet<>();
-        for (Path directory : ToolDirectories.listPackages(ToolDirectories.exportDir())) {
-            Path config = directory.resolve(PackageService.CONFIG_FILE);
-            if (knownPackages.add(config)) {
-                availableModel.addElement(config);
+        for (Path packagePath : ToolDirectories.listPackages(ToolDirectories.exportDir())) {
+            if (knownPackages.add(packagePath)) {
+                availableModel.addElement(packagePath);
             }
         }
         for (RecentConfigs.Entry entry : recentConfigs.entries()) {
-            Path config = entry.configFile();
-            if (isCombinablePackage(config) && knownPackages.add(config)) {
-                availableModel.addElement(config);
+            Path packagePath = asPackagePath(entry.configFile());
+            if (isCombinablePackage(packagePath) && knownPackages.add(packagePath)) {
+                availableModel.addElement(packagePath);
             }
         }
         DefaultListModel<Path> selectedModel = new DefaultListModel<>();
@@ -314,30 +317,30 @@ public final class MainFrame extends JFrame {
         JButton addOther = new JButton("Weitere...");
         addOther.addActionListener(e -> {
             JFileChooser chooser = new JFileChooser();
-            chooser.setDialogTitle("Weiteres Paket auswählen");
+            chooser.setDialogTitle("Weiteres Paket auswählen (ZIP oder Ordner)");
             chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
+            chooser.setFileFilter(new FileNameExtensionFilter(
+                    "SynchronizeTool-Paket (*.zip)", "zip"));
             if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
                 return;
             }
             Path selected = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
-            Path config = Files.isDirectory(selected)
-                    ? selected.resolve(PackageService.CONFIG_FILE)
-                    : selected;
-            if (!isCombinablePackage(config)) {
+            Path packagePath = asPackagePath(selected);
+            if (!isCombinablePackage(packagePath)) {
                 JOptionPane.showMessageDialog(this,
-                        "Das ausgewählte Verzeichnis enthält kein vollständiges Paket\n"
-                                + "(config.txt und payload/ werden benötigt).",
+                        "Die Auswahl ist kein vollständiges Paket\n"
+                                + "(config.txt und payload/ in einer ZIP-Datei oder einem Ordner).",
                         "Kein vollständiges Paket", JOptionPane.ERROR_MESSAGE);
                 return;
             }
-            if (!containsPath(availableModel, config)) {
-                availableModel.addElement(config);
+            if (!containsPath(availableModel, packagePath)) {
+                availableModel.addElement(packagePath);
             }
-            if (!containsPath(selectedModel, config)) {
-                selectedModel.addElement(config);
+            if (!containsPath(selectedModel, packagePath)) {
+                selectedModel.addElement(packagePath);
             }
-            selectedList.setSelectedValue(config, true);
-            selectedList.ensureIndexIsVisible(selectedModel.indexOf(config));
+            selectedList.setSelectedValue(packagePath, true);
+            selectedList.ensureIndexIsVisible(selectedModel.indexOf(packagePath));
         });
         JButton remove = new JButton("Entfernen");
         remove.addActionListener(e -> {
@@ -421,7 +424,7 @@ public final class MainFrame extends JFrame {
         form.add(new JLabel("<html>Bei gleichen Zielpfaden gewinnt das <b>oberste</b> Paket. "
                 + "Ausschlussmuster werden zusammengeführt.<br>Die Daten werden aus den "
                 + "vorhandenen <i>payload</i>-Ordnern übernommen; die ursprünglichen Dateien "
-                + "müssen nicht mehr existieren.<br>Das Gesamtpaket wird als eigener Ordner "
+                + "müssen nicht mehr existieren.<br>Das Gesamtpaket wird als ZIP-Datei "
                 + "unter <i>Export</i> angelegt.</html>"), gbc);
 
         while (true) {
@@ -449,12 +452,11 @@ public final class MainFrame extends JFrame {
             runLoggedTask(LogFiles.Category.CREATION, "pakete-kombinieren", () -> {
                 log("Gesamtpaket: " + target);
                 log("Enthaltene Pakete: " + selected);
-                SyncConfig combined = combiner.combine(selected, target);
-                Path configFile = target.resolve(PackageService.CONFIG_FILE);
-                recentConfigs.remember(configFile);
+                SyncConfig combined = combineToArchive(selected, target);
+                recentConfigs.remember(target);
                 SwingUtilities.invokeLater(() -> {
                     sourcePackageField.setText(target.toString());
-                    currentConfigFile = configFile;
+                    currentConfigFile = target;
                     sourceConfig.clearEntries();
                     for (SyncEntry entry : combined.entries()) {
                         sourceConfig.add(entry);
@@ -463,11 +465,42 @@ public final class MainFrame extends JFrame {
                     refreshSourceList();
                     refreshPackageBoxes();
                     selectPackageInBoxSilently(sourcePackageBox, target);
-                    refreshRecentConfigs(configFile);
+                    refreshRecentConfigs(target);
                     log("Gesamtpaket im Quelle-Reiter geladen.");
                 });
             });
             return;
+        }
+    }
+
+    /**
+     * Entpackt die ausgewählten Pakete bei Bedarf, führt sie in einem temporären
+     * Verzeichnis zusammen und schreibt das Ergebnis als ZIP.
+     */
+    private SyncConfig combineToArchive(List<Path> packages, Path archive) throws IOException {
+        List<Path> workDirs = new ArrayList<>();
+        try {
+            List<Path> sourceDirs = new ArrayList<>();
+            for (Path packagePath : packages) {
+                if (PackageArchive.isArchive(packagePath)) {
+                    Path temp = PackageArchive.extractToTemp(packagePath);
+                    workDirs.add(temp);
+                    sourceDirs.add(temp);
+                    log("Paket entpackt: " + packagePath + " -> " + temp);
+                } else {
+                    sourceDirs.add(packagePath);
+                }
+            }
+            Path work = Files.createTempDirectory("synctool-gesamt-");
+            workDirs.add(work);
+            SyncConfig combined = combiner.combine(sourceDirs, work);
+            PackageArchive.create(work, archive);
+            log("Gesamtpaket gespeichert: " + archive);
+            return combined;
+        } finally {
+            for (Path dir : workDirs) {
+                FileOps.deleteRecursively(dir);
+            }
         }
     }
 
@@ -506,11 +539,25 @@ public final class MainFrame extends JFrame {
         list.ensureIndexIsVisible(target);
     }
 
-    private static boolean isCombinablePackage(Path configFile) {
-        Path parent = configFile.getParent();
-        return parent != null
-                && Files.isRegularFile(configFile)
-                && Files.isDirectory(parent.resolve(PackageService.PAYLOAD_DIR));
+    private static boolean isCombinablePackage(Path packagePath) {
+        return ToolDirectories.isCompletePackage(packagePath);
+    }
+
+    /**
+     * Bringt einen gespeicherten Pfad auf die Paketebene: Eine {@code config.txt} in
+     * einem alten Paketordner wird durch den Ordner ersetzt, ZIP-Dateien bleiben
+     * unverändert. Einzelne Konfigurationsdateien bleiben ebenfalls unverändert.
+     */
+    private static Path asPackagePath(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        if (Files.isDirectory(normalized)) {
+            return normalized;
+        }
+        String name = normalized.getFileName() == null ? "" : normalized.getFileName().toString();
+        if (name.equals(PackageService.CONFIG_FILE) && normalized.getParent() != null) {
+            return normalized.getParent();
+        }
+        return normalized;
     }
 
     private void createNewPackage() {
@@ -544,7 +591,7 @@ public final class MainFrame extends JFrame {
         form.add(keepSelection, gbc);
 
         gbc.gridy = 3;
-        form.add(new JLabel("<html>Das neue Paket wird unter <i>Export/Paketname</i> angelegt.<br>"
+        form.add(new JLabel("<html>Das neue Paket wird als <i>Export/Paketname.zip</i> angelegt.<br>"
                 + "Ein bereits vorhandenes Paket bleibt unverändert.</html>"), gbc);
 
         while (true) {
@@ -567,24 +614,37 @@ public final class MainFrame extends JFrame {
             runLoggedTask(LogFiles.Category.CREATION, "neues-paket", () -> {
                 log("Neues Paket: " + newPackage);
                 log("Auswahl übernommen: " + (keep ? "ja" : "nein"));
-                Files.createDirectories(newPackage);
-                service.createPackage(config, newPackage);
-                Path configFile = newPackage.resolve(PackageService.CONFIG_FILE);
-                recentConfigs.remember(configFile);
+                writeArchive(config, newPackage);
+                recentConfigs.remember(newPackage);
                 SwingUtilities.invokeLater(() -> {
                     sourcePackageField.setText(newPackage.toString());
-                    currentConfigFile = configFile;
+                    currentConfigFile = newPackage;
                     if (!keep) {
                         sourceConfig.clearEntries();
                         refreshSourceList();
                     }
                     refreshPackageBoxes();
                     selectPackageInBoxSilently(sourcePackageBox, newPackage);
-                    refreshRecentConfigs(configFile);
+                    refreshRecentConfigs(newPackage);
                 });
                 log("Neues Paket angelegt: " + newPackage);
             });
             return;
+        }
+    }
+
+    /**
+     * Schreibt eine Konfiguration in ein temporäres Paketverzeichnis und packt dieses
+     * anschließend als ZIP an den gewünschten Zielpfad.
+     */
+    private void writeArchive(SyncConfig config, Path archive) throws IOException {
+        Path work = Files.createTempDirectory("synctool-paket-");
+        try {
+            service.createPackage(config, work);
+            PackageArchive.create(work, archive);
+            log("Paket-ZIP gespeichert: " + archive);
+        } finally {
+            FileOps.deleteRecursively(work);
         }
     }
 
@@ -601,19 +661,21 @@ public final class MainFrame extends JFrame {
                     "Ungültiger Name", JOptionPane.ERROR_MESSAGE);
             return null;
         }
-
         if (parent == null) {
             JOptionPane.showMessageDialog(this, "Bitte einen Speicherort angeben.",
                     "Fehlender Speicherort", JOptionPane.ERROR_MESSAGE);
             return null;
         }
+        String archiveName = name.toLowerCase(Locale.ROOT).endsWith(PackageArchive.EXTENSION)
+                ? name
+                : name + PackageArchive.EXTENSION;
         Path normalizedParent = parent.toAbsolutePath().normalize();
         if (Files.exists(normalizedParent) && !Files.isDirectory(normalizedParent)) {
             JOptionPane.showMessageDialog(this, "Der Speicherort ist kein Verzeichnis.",
                     "Fehler", JOptionPane.ERROR_MESSAGE);
             return null;
         }
-        Path newPackage = normalizedParent.resolve(name).normalize();
+        Path newPackage = normalizedParent.resolve(archiveName).normalize();
         if (!normalizedParent.equals(newPackage.getParent())) {
             JOptionPane.showMessageDialog(this, "Ungültiger Paketname.",
                     "Fehler", JOptionPane.ERROR_MESSAGE);
@@ -621,7 +683,7 @@ public final class MainFrame extends JFrame {
         }
         if (Files.exists(newPackage)) {
             JOptionPane.showMessageDialog(this,
-                    "Im Export-Ordner existiert bereits \"" + name + "\".\n"
+                    "Im Export-Ordner existiert bereits \"" + archiveName + "\".\n"
                             + "Bitte einen anderen Namen wählen.",
                     "Paket existiert bereits", JOptionPane.ERROR_MESSAGE);
             return null;
@@ -694,10 +756,8 @@ public final class MainFrame extends JFrame {
             if (parent != null && Files.isDirectory(parent)) {
                 chooser.setCurrentDirectory(parent.toFile());
             }
-            chooser.setSelectedFile(currentConfigFile.toFile());
-        } else {
-            chooser.setSelectedFile(new File("synctool-config.txt"));
         }
+        chooser.setSelectedFile(new File("synctool-config.txt"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
@@ -715,35 +775,47 @@ public final class MainFrame extends JFrame {
     }
 
     private void createPackage() {
-        Path packageDir = packagePath(sourcePackageField.getText());
-        if (packageDir == null || requirePackageFolder(packageDir)) {
+        Path requested = packagePath(sourcePackageField.getText());
+        if (requested == null || requirePackagePath(requested)) {
             return;
         }
-        boolean replace = shouldReplacePackage(packageDir);
-        if (replace && !confirmReplacePackage(packageDir)) {
+        Path archive = archiveTarget(requested);
+        boolean replace = shouldReplacePackage(archive);
+        if (replace && !confirmReplacePackage(archive)) {
             return;
         }
         runLoggedTask(LogFiles.Category.CREATION, "paket-erstellen", () -> {
-            log("Paketverzeichnis: " + packageDir);
+            log("Paket-ZIP: " + archive);
             if (replace) {
-                log("Vorhandenes Paket wird vollständig ersetzt.");
-                FileOps.deleteRecursively(packageDir);
+                log("Vorhandene Paket-ZIP wird ersetzt.");
             }
-            service.createPackage(sourceConfig, packageDir);
-            Path configFile = packageDir.resolve(PackageService.CONFIG_FILE);
-            recentConfigs.remember(configFile);
+            writeArchive(sourceConfig, archive);
+            recentConfigs.remember(archive);
             SwingUtilities.invokeLater(() -> {
-                currentConfigFile = configFile;
+                sourcePackageField.setText(archive.toString());
+                currentConfigFile = archive;
                 refreshPackageBoxes();
-                selectPackageInBoxSilently(sourcePackageBox, packageDir);
-                refreshRecentConfigs(configFile);
+                selectPackageInBoxSilently(sourcePackageBox, archive);
+                refreshRecentConfigs(archive);
             });
         });
     }
 
-    /** Lehnt die übergeordneten Ordner Import und Export als Paketordner ab. */
-    private boolean requirePackageFolder(Path packageDir) {
-        Path normalized = packageDir.toAbsolutePath().normalize();
+    /** Ergänzt die Endung {@code .zip}, wenn der Pfad noch keine ZIP-Datei bezeichnet. */
+    private static Path archiveTarget(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        String name = normalized.getFileName() == null ? "" : normalized.getFileName().toString();
+        if (name.toLowerCase(Locale.ROOT).endsWith(PackageArchive.EXTENSION)) {
+            return normalized;
+        }
+        Path parent = normalized.getParent();
+        return (parent == null ? Paths.get(name + PackageArchive.EXTENSION)
+                : parent.resolve(name + PackageArchive.EXTENSION)).toAbsolutePath().normalize();
+    }
+
+    /** Lehnt die übergeordneten Ordner Import und Export als Paketpfad ab. */
+    private boolean requirePackagePath(Path packagePath) {
+        Path normalized = packagePath.toAbsolutePath().normalize();
         Path exampleRoot = null;
         if (normalized.equals(ToolDirectories.exportDir())) {
             exampleRoot = ToolDirectories.exportDir();
@@ -752,27 +824,28 @@ public final class MainFrame extends JFrame {
         }
         if (exampleRoot != null) {
             JOptionPane.showMessageDialog(this,
-                    "Bitte einen Paketordner auswählen, nicht den übergeordneten Ordner \""
+                    "Bitte eine Paket-ZIP auswählen, nicht den übergeordneten Ordner \""
                             + normalized.getFileName() + "\".\n\n"
                             + "Pakete liegen zum Beispiel unter:\n" + exampleRoot
-                            + File.separator + "Paket1",
-                    "Paketordner erforderlich", JOptionPane.WARNING_MESSAGE);
+                            + File.separator + "Paket1" + PackageArchive.EXTENSION,
+                    "Paketpfad erforderlich", JOptionPane.WARNING_MESSAGE);
             return true;
         }
         return false;
     }
 
-    /** Ein vorhandenes Paket in Export wird vor dem Neuschreiben vollständig geleert. */
-    private static boolean shouldReplacePackage(Path packageDir) {
-        return Files.exists(packageDir)
-                && (ToolDirectories.isCompletePackage(packageDir)
-                        || ToolDirectories.isDirectChild(ToolDirectories.exportDir(), packageDir));
+    /** Ein vorhandenes Paket in Export wird vor dem Neuschreiben ersetzt. */
+    private static boolean shouldReplacePackage(Path packagePath) {
+        return Files.exists(packagePath)
+                && (ToolDirectories.isCompletePackage(packagePath)
+                        || ToolDirectories.isDirectChild(ToolDirectories.exportDir(), packagePath));
     }
 
-    private boolean confirmReplacePackage(Path packageDir) {
+    private boolean confirmReplacePackage(Path packagePath) {
         int answer = JOptionPane.showConfirmDialog(this,
-                "Das Paket\n" + packageDir + "\n\nwird vollständig geleert und neu erstellt.\n"
-                        + "Dabei werden auch Dateien entfernt, die nicht mehr ausgewählt sind.\n\nFortfahren?",
+                "Das vorhandene Paket\n" + packagePath + "\n\nwird ersetzt.\n"
+                        + "Dateien, die nicht mehr ausgewählt sind, sind anschließend nicht mehr\n"
+                        + "im Paket enthalten.\n\nFortfahren?",
                 "Paket ersetzen", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         return answer == JOptionPane.YES_OPTION;
     }
@@ -810,8 +883,10 @@ public final class MainFrame extends JFrame {
 
     private void openPackageOrConfig() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Paketordner oder Konfigurationsdatei öffnen");
+        chooser.setDialogTitle("Paket-ZIP, Paketordner oder Konfigurationsdatei öffnen");
         chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
+        chooser.setFileFilter(new FileNameExtensionFilter(
+                "SynchronizeTool-Paket (*.zip) oder Konfiguration (*.txt)", "zip", "txt"));
         List<RecentConfigs.Entry> known = recentConfigs.entries();
         if (!known.isEmpty()) {
             Path parent = known.get(0).configFile().getParent();
@@ -822,11 +897,7 @@ public final class MainFrame extends JFrame {
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
-        Path selected = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
-        Path configFile = Files.isDirectory(selected)
-                ? selected.resolve(PackageService.CONFIG_FILE)
-                : selected;
-        loadConfigFile(configFile);
+        loadConfigFile(chooser.getSelectedFile().toPath().toAbsolutePath().normalize());
     }
 
     private void forgetSelectedRecent() {
@@ -839,11 +910,15 @@ public final class MainFrame extends JFrame {
         log("Aus der Liste entfernt (Dateien bleiben erhalten): " + entry.configFile());
     }
 
-    private void loadConfigFile(Path configFile) {
-        Path file = configFile.toAbsolutePath().normalize();
-        if (!Files.isRegularFile(file)) {
+    private void loadConfigFile(Path path) {
+        Path packagePath = asPackagePath(path);
+        boolean standaloneConfig = Files.isRegularFile(packagePath)
+                && !PackageArchive.isArchive(packagePath);
+        boolean isPackage = ToolDirectories.isCompletePackage(packagePath);
+        if (!standaloneConfig && !isPackage) {
             JOptionPane.showMessageDialog(this,
-                    "Konfigurationsdatei nicht gefunden:\n" + file,
+                    "Kein vollständiges Paket und keine Konfigurationsdatei gefunden:\n" + packagePath
+                            + "\n\nErwartet wird eine ZIP-Datei mit config.txt und payload/.",
                     "Nicht gefunden", JOptionPane.ERROR_MESSAGE);
             return;
         }
@@ -856,7 +931,9 @@ public final class MainFrame extends JFrame {
             }
         }
         try {
-            SyncConfig loaded = SyncConfig.load(file);
+            SyncConfig loaded = standaloneConfig
+                    ? SyncConfig.load(packagePath)
+                    : service.loadConfig(packagePath);
             sourceConfig.clearEntries();
             for (SyncEntry entry : loaded.entries()) {
                 sourceConfig.add(entry);
@@ -864,24 +941,22 @@ public final class MainFrame extends JFrame {
             sourceConfig.setExcludes(loaded.excludes());
             refreshSourceList();
 
-            boolean isPackageConfig = file.getFileName().toString().equals(PackageService.CONFIG_FILE);
-            Path packageDir;
-            if (isPackageConfig && file.getParent() != null) {
-                packageDir = file.getParent();
+            Path target;
+            if (isPackage) {
+                target = packagePath;
             } else {
-                packageDir = defaultExportPackageDir();
-                log("Hinweis: Die Datei heißt nicht \"" + PackageService.CONFIG_FILE
-                        + "\"; als Paketverzeichnis wird " + packageDir + " verwendet.");
+                target = defaultExportPackagePath();
+                log("Hinweis: Die Datei ist kein Paket; als Paket-ZIP wird " + target + " verwendet.");
             }
-            sourcePackageField.setText(packageDir.toString());
-            selectPackageInBoxSilently(sourcePackageBox, packageDir);
-            currentConfigFile = file;
+            sourcePackageField.setText(target.toString());
+            selectPackageInBoxSilently(sourcePackageBox, target);
+            currentConfigFile = packagePath;
 
-            recentConfigs.remember(file);
-            refreshRecentConfigs(file);
-            log("Konfiguration geladen: " + file + " (" + loaded.entries().size()
+            recentConfigs.remember(currentConfigFile);
+            refreshRecentConfigs(currentConfigFile);
+            log("Konfiguration geladen: " + packagePath + " (" + loaded.entries().size()
                     + " Einträge, " + loaded.excludes().size() + " Ausschlüsse)");
-            log("Paketverzeichnis: " + packageDir);
+            log("Paket: " + target);
         } catch (Exception e) {
             log("FEHLER beim Laden: " + e.getMessage());
             JOptionPane.showMessageDialog(this, e.getMessage(),
@@ -912,10 +987,10 @@ public final class MainFrame extends JFrame {
         top.add(Box.createVerticalStrut(4));
 
         JPanel fieldRow = new JPanel(new BorderLayout(6, 4));
-        fieldRow.add(new JLabel("Paketverzeichnis (von Rechner 1 hierher kopiert):"), BorderLayout.NORTH);
+        fieldRow.add(new JLabel("Paket-ZIP (von Rechner 1 hierher nach Import kopiert):"), BorderLayout.NORTH);
         fieldRow.add(targetPackageField, BorderLayout.CENTER);
         JButton choosePackage = new JButton("...");
-        choosePackage.addActionListener(e -> chooseDirectory(targetPackageField));
+        choosePackage.addActionListener(e -> choosePackagePath(targetPackageField));
         fieldRow.add(choosePackage, BorderLayout.EAST);
         top.add(fieldRow);
         panel.add(top, BorderLayout.NORTH);
@@ -977,7 +1052,7 @@ public final class MainFrame extends JFrame {
 
     private void previewTargetConfig() {
         Path packageDir = packagePath(targetPackageField.getText());
-        if (packageDir == null || requirePackageFolder(packageDir)) {
+        if (packageDir == null || requirePackagePath(packageDir)) {
             return;
         }
         runTask(() -> {
@@ -991,11 +1066,11 @@ public final class MainFrame extends JFrame {
 
     private void dryRunTarget() {
         Path packageDir = packagePath(targetPackageField.getText());
-        if (packageDir == null || requirePackageFolder(packageDir)) {
+        if (packageDir == null || requirePackagePath(packageDir)) {
             return;
         }
         runLoggedTask(LogFiles.Category.APPLY, "vorschau", () -> {
-            log("Paketverzeichnis: " + packageDir);
+            log("Paket: " + packageDir);
             log("Kopiermodus: " + copyModeLabel(selectedCopyMode()));
             SyncConfig config = service.loadConfig(packageDir);
             SwingUtilities.invokeLater(() -> {
@@ -1008,12 +1083,12 @@ public final class MainFrame extends JFrame {
 
     private void synchronize() {
         Path packageDir = packagePath(targetPackageField.getText());
-        if (packageDir == null || requirePackageFolder(packageDir) || !confirmSync()) {
+        if (packageDir == null || requirePackagePath(packageDir) || !confirmSync()) {
             return;
         }
         PackageService.CopyMode mode = selectedCopyMode();
         runLoggedTask(LogFiles.Category.APPLY, "synchronisieren", () -> {
-            log("Paketverzeichnis: " + packageDir);
+            log("Paket: " + packageDir);
             log("Kopiermodus: " + copyModeLabel(mode));
             SyncConfig config = service.loadConfig(packageDir);
             SwingUtilities.invokeLater(() -> {
@@ -1109,10 +1184,10 @@ public final class MainFrame extends JFrame {
         clientSection.add(downloadRow);
 
         JPanel destinationRow = new JPanel(new BorderLayout(6, 4));
-        destinationRow.add(new JLabel("Paketordner (wird unter Import angelegt):"), BorderLayout.WEST);
+        destinationRow.add(new JLabel("Paket-ZIP (wird unter Import angelegt):"), BorderLayout.WEST);
         destinationRow.add(downloadDirField, BorderLayout.CENTER);
         JButton chooseDownloadDir = new JButton("...");
-        chooseDownloadDir.addActionListener(e -> chooseDirectory(downloadDirField));
+        chooseDownloadDir.addActionListener(e -> chooseArchiveDestination(downloadDirField));
         destinationRow.add(chooseDownloadDir, BorderLayout.EAST);
         clientSection.add(destinationRow);
 
@@ -1134,37 +1209,37 @@ public final class MainFrame extends JFrame {
     }
 
     private void startShare() {
-        Path packageDir = packagePath(sourcePackageField.getText());
-        if (packageDir == null || requirePackageFolder(packageDir)) {
+        Path requested = packagePath(sourcePackageField.getText());
+        if (requested == null || requirePackagePath(requested)) {
             return;
         }
         int port = parsePort(serverPortField.getText());
         if (port < 0) {
             return;
         }
-        boolean replace = shouldReplacePackage(packageDir);
-        if (replace && !confirmReplacePackage(packageDir)) {
+        Path archive = archiveTarget(requested);
+        boolean replace = shouldReplacePackage(archive);
+        if (replace && !confirmReplacePackage(archive)) {
             return;
         }
         runLoggedTask(LogFiles.Category.CREATION, "paket-freigeben", () -> {
-            log("Paketverzeichnis: " + packageDir);
+            log("Paket-ZIP: " + archive);
             log("Port: " + port);
             if (replace) {
-                log("Vorhandenes Paket wird vollständig ersetzt.");
-                FileOps.deleteRecursively(packageDir);
+                log("Vorhandene Paket-ZIP wird ersetzt.");
             }
-            service.createPackage(sourceConfig, packageDir);
-            Path configFile = packageDir.resolve(PackageService.CONFIG_FILE);
-            recentConfigs.remember(configFile);
-            String url = packageServer.start(packageDir, port);
+            writeArchive(sourceConfig, archive);
+            recentConfigs.remember(archive);
+            String url = packageServer.start(archive, port);
             SwingUtilities.invokeLater(() -> {
                 shareUrlField.setText(url);
                 downloadUrlField.setText(url);
                 serverStatus.setText("aktiv auf Port " + packageServer.port());
-                currentConfigFile = configFile;
+                sourcePackageField.setText(archive.toString());
+                currentConfigFile = archive;
                 refreshPackageBoxes();
-                selectPackageInBoxSilently(sourcePackageBox, packageDir);
-                refreshRecentConfigs(configFile);
+                selectPackageInBoxSilently(sourcePackageBox, archive);
+                refreshRecentConfigs(archive);
             });
         });
     }
@@ -1204,17 +1279,14 @@ public final class MainFrame extends JFrame {
                     "Hinweis", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        Path destination;
-        try {
-            destination = Paths.get(downloadDirField.getText().trim()).toAbsolutePath().normalize();
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Ungültiger Paketordner.",
-                    "Fehler", JOptionPane.ERROR_MESSAGE);
+        Path requested = packagePath(downloadDirField.getText());
+        if (requested == null) {
             return;
         }
-        if (requirePackageFolder(destination)) {
+        if (requirePackagePath(requested)) {
             return;
         }
+        Path destination = archiveTarget(requested);
         if (Files.exists(destination) && !confirmReplacePackage(destination)) {
             return;
         }
@@ -1223,24 +1295,23 @@ public final class MainFrame extends JFrame {
         }
         PackageService.CopyMode copyMode = selectedCopyMode();
         ThrowingRunnable downloadTask = () -> {
-            Path packageDir = downloader.download(url, destination);
-            SyncConfig config = service.loadConfig(packageDir);
-            Path configFile = packageDir.resolve(PackageService.CONFIG_FILE);
-            recentConfigs.remember(configFile);
+            Path archive = downloader.downloadArchive(url, destination);
+            SyncConfig config = service.loadConfig(archive);
+            recentConfigs.remember(archive);
             SwingUtilities.invokeLater(() -> {
                 targetConfig = config;
                 refreshTargetList();
-                targetPackageField.setText(packageDir.toString());
+                targetPackageField.setText(archive.toString());
                 refreshPackageBoxes();
-                selectPackageInBoxSilently(targetPackageBox, packageDir);
-                refreshRecentConfigs(configFile);
+                selectPackageInBoxSilently(targetPackageBox, archive);
+                refreshRecentConfigs(archive);
                 downloadDirField.setText(defaultDownloadDir().toString());
             });
             if (mode == DownloadMode.APPLY) {
                 log("Kopiermodus: " + copyModeLabel(copyMode));
-                service.apply(config, packageDir, copyMode);
+                service.apply(config, archive, copyMode);
             } else if (mode == DownloadMode.PREVIEW) {
-                service.dryRun(config, packageDir);
+                service.dryRun(config, archive);
             }
         };
         if (mode == DownloadMode.DOWNLOAD) {
@@ -1545,21 +1616,21 @@ public final class MainFrame extends JFrame {
 
     private void loadSelectedSourcePackage() {
         Object item = sourcePackageBox.getSelectedItem();
-        if (!(item instanceof Path packageDir) || requirePackageFolder(packageDir)) {
+        if (!(item instanceof Path packageDir) || requirePackagePath(packageDir)) {
             return;
         }
         loadSourcePackage(packageDir);
     }
 
-    private void loadSourcePackage(Path packageDir) {
-        Path configFile = packageDir.resolve(PackageService.CONFIG_FILE);
-        if (!Files.isRegularFile(configFile)) {
+    private void loadSourcePackage(Path packagePath) {
+        if (!ToolDirectories.isCompletePackage(packagePath)) {
             JOptionPane.showMessageDialog(this,
-                    "Im Paketordner wurde keine " + PackageService.CONFIG_FILE + " gefunden:\n" + packageDir,
+                    "Die Auswahl ist kein vollständiges Paket (config.txt und payload/ fehlen):\n"
+                            + packagePath,
                     "Kein vollständiges Paket", JOptionPane.ERROR_MESSAGE);
             return;
         }
-        loadConfigFile(configFile);
+        loadConfigFile(packagePath);
     }
 
     private void selectedTargetPackageChanged() {
@@ -1574,19 +1645,53 @@ public final class MainFrame extends JFrame {
         previewTargetConfig();
     }
 
-    private void chooseDirectory(JTextField field) {
-        JFileChooser chooser = new JFileChooser(field.getText());
-        chooser.setDialogTitle("Verzeichnis auswählen");
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+    /** Datei- oder Ordnerauswahl für ein bestehendes Paket (ZIP oder alter Paketordner). */
+    private void choosePackagePath(JTextField field) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Paket-ZIP oder Paketordner auswählen");
+        chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
+        chooser.setFileFilter(new FileNameExtensionFilter(
+                "SynchronizeTool-Paket (*.zip)", "zip"));
+        applyStartPath(chooser, field.getText());
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            field.setText(chooser.getSelectedFile().getAbsolutePath());
+            field.setText(chooser.getSelectedFile().toPath().toAbsolutePath().normalize().toString());
+        }
+    }
+
+    /** Speicherort für eine zu erzeugende Paket-ZIP auswählen. */
+    private void chooseArchiveDestination(JTextField field) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Paket-ZIP speichern unter");
+        chooser.setFileFilter(new FileNameExtensionFilter(
+                "SynchronizeTool-Paket (*.zip)", "zip"));
+        applyStartPath(chooser, field.getText());
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path selected = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
+        field.setText(archiveTarget(selected).toString());
+    }
+
+    private static void applyStartPath(JFileChooser chooser, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        File start = new File(text.trim());
+        if (start.isDirectory()) {
+            chooser.setCurrentDirectory(start);
+        } else {
+            File parent = start.getParentFile();
+            if (parent != null && parent.isDirectory()) {
+                chooser.setCurrentDirectory(parent);
+            }
+            chooser.setSelectedFile(start);
         }
     }
 
     private Path packagePath(String text) {
         String value = text == null ? "" : text.trim();
         if (value.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Bitte zuerst ein Paketverzeichnis auswählen.",
+            JOptionPane.showMessageDialog(this, "Bitte zuerst ein Paket auswählen.",
                     "Hinweis", JOptionPane.WARNING_MESSAGE);
             return null;
         }
@@ -1681,22 +1786,26 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    private static Path defaultExportPackageDir() {
+    private static Path defaultExportPackagePath() {
         return defaultPackageIn(ToolDirectories.exportDir());
     }
 
-    private static Path defaultImportPackageDir() {
+    private static Path defaultImportPackagePath() {
         return defaultPackageIn(ToolDirectories.importDir());
     }
 
     private static Path defaultPackageIn(Path root) {
         List<Path> packages = ToolDirectories.listPackages(root);
-        return packages.isEmpty() ? root : packages.get(0);
+        if (!packages.isEmpty()) {
+            return packages.get(0);
+        }
+        return root.resolve("Paket1" + PackageArchive.EXTENSION);
     }
 
     private static Path defaultDownloadDir() {
         return ToolDirectories.importDir().resolve(
-                "Netzwerkpaket-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")));
+                "Netzwerkpaket-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+                        + PackageArchive.EXTENSION);
     }
 
     @FunctionalInterface

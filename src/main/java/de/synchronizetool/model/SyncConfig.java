@@ -5,6 +5,8 @@ import de.synchronizetool.core.PathMapper;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -103,29 +105,41 @@ public final class SyncConfig {
     }
 
     public static SyncConfig load(Path file) throws IOException {
-        SyncConfig config = new SyncConfig();
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            String line;
-            int lineNumber = 0;
-            while ((line = reader.readLine()) != null) {
-                lineNumber++;
-                String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                    continue;
+            return load(reader, file.toString());
+        }
+    }
+
+    /** Liest eine Konfiguration aus einem Stream, z. B. direkt aus einem ZIP-Paket. */
+    public static SyncConfig load(InputStream in, String sourceName) throws IOException {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            return load(reader, sourceName);
+        }
+    }
+
+    private static SyncConfig load(BufferedReader reader, String sourceName) throws IOException {
+        SyncConfig config = new SyncConfig();
+        String line;
+        int lineNumber = 0;
+        while ((line = reader.readLine()) != null) {
+            lineNumber++;
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            int separator = trimmed.indexOf('|');
+            if (separator < 1 || separator == trimmed.length() - 1) {
+                throw new IOException("Ungültige Zeile " + lineNumber + " in " + sourceName + ": " + line);
+            }
+            String token = trimmed.substring(0, separator).trim();
+            String path = trimmed.substring(separator + 1).trim();
+            if (token.equals("X")) {
+                if (!config.excludes.contains(path)) {
+                    config.excludes.add(path);
                 }
-                int separator = trimmed.indexOf('|');
-                if (separator < 1 || separator == trimmed.length() - 1) {
-                    throw new IOException("Ungültige Zeile " + lineNumber + " in " + file + ": " + line);
-                }
-                String token = trimmed.substring(0, separator).trim();
-                String path = trimmed.substring(separator + 1).trim();
-                if (token.equals("X")) {
-                    if (!config.excludes.contains(path)) {
-                        config.excludes.add(path);
-                    }
-                } else {
-                    config.add(SyncEntry.of(token, path));
-                }
+            } else {
+                config.add(SyncEntry.of(token, path));
             }
         }
         return config;

@@ -135,14 +135,22 @@ public final class PackageService {
 
     // ------------------------------------------------------------------- Ziel
 
-    /** Liest die config.txt aus einem Paket. */
-    public SyncConfig loadConfig(Path packageDir) throws IOException {
-        Path configFile = packageDir.resolve(CONFIG_FILE);
-        if (!Files.isRegularFile(configFile)) {
-            throw new IOException("Keine " + CONFIG_FILE + " gefunden in: " + packageDir);
+    /** Liest die config.txt aus einem Paketordner oder direkt aus einer Paket-ZIP. */
+    public SyncConfig loadConfig(Path packagePath) throws IOException {
+        SyncConfig config;
+        String source;
+        if (PackageArchive.isArchive(packagePath)) {
+            config = PackageArchive.readConfig(packagePath);
+            source = packagePath + "!/" + CONFIG_FILE;
+        } else {
+            Path configFile = packagePath.resolve(CONFIG_FILE);
+            if (!Files.isRegularFile(configFile)) {
+                throw new IOException("Keine " + CONFIG_FILE + " gefunden in: " + packagePath);
+            }
+            config = SyncConfig.load(configFile);
+            source = configFile.toString();
         }
-        SyncConfig config = SyncConfig.load(configFile);
-        log.accept("Konfiguration geladen: " + configFile + " (" + config.entries().size() + " Einträge)");
+        log.accept("Konfiguration geladen: " + source + " (" + config.entries().size() + " Einträge)");
         for (SyncEntry entry : config.entries()) {
             log.accept("  " + entry + " -> " + entry.localPath());
         }
@@ -153,10 +161,24 @@ public final class PackageService {
     }
 
     /**
-     * Vergleicht das Paket mit dem Ziel, ohne etwas zu verändern. Zeigt neue, geänderte
-     * und zu entfernende Dateien sowie die anfallenden Sicherungen.
+     * Vergleicht das Paket mit dem Ziel, ohne etwas zu verändern. Bei einer ZIP-Datei
+     * wird das Paket vorher in einen temporären Ordner entpackt.
      */
-    public void dryRun(SyncConfig config, Path packageDir) throws IOException {
+    public void dryRun(SyncConfig config, Path packagePath) throws IOException {
+        if (!PackageArchive.isArchive(packagePath)) {
+            dryRunDirectory(config, packagePath);
+            return;
+        }
+        Path temp = PackageArchive.extractToTemp(packagePath);
+        try {
+            log.accept("Paket entpackt: " + packagePath + " -> " + temp);
+            dryRunDirectory(config, temp);
+        } finally {
+            FileOps.deleteRecursively(temp);
+        }
+    }
+
+    private void dryRunDirectory(SyncConfig config, Path packageDir) throws IOException {
         Path payload = requirePayload(packageDir);
         ExcludeMatcher matcher = new ExcludeMatcher(config.excludes());
         log.accept("VORSCHAU (Dry Run) – es werden keine Dateien verändert.");
@@ -252,14 +274,29 @@ public final class PackageService {
     }
 
     /**
-     * Spielt das Paket auf diesem Rechner ein.
+     * Spielt das Paket auf diesem Rechner ein. Bei einer ZIP-Datei wird das Paket vorher
+     * in einen temporären Ordner entpackt.
      *
      * <p>Bei {@link CopyMode#REPLACE_ALL} wird jeder Eintrag als Ganzes gesichert und neu
      * kopiert. Bei {@link CopyMode#CHANGED_ONLY} werden nur neue und geänderte Dateien
      * geschrieben, unveränderte Dateien übersprungen und nicht mehr vorhandene Dateien
      * mit Sicherung entfernt. Ausschlussmuster bleiben in beiden Modi unangetastet.</p>
      */
-    public void apply(SyncConfig config, Path packageDir, CopyMode mode) throws IOException {
+    public void apply(SyncConfig config, Path packagePath, CopyMode mode) throws IOException {
+        if (!PackageArchive.isArchive(packagePath)) {
+            applyDirectory(config, packagePath, mode);
+            return;
+        }
+        Path temp = PackageArchive.extractToTemp(packagePath);
+        try {
+            log.accept("Paket entpackt: " + packagePath + " -> " + temp);
+            applyDirectory(config, temp, mode);
+        } finally {
+            FileOps.deleteRecursively(temp);
+        }
+    }
+
+    private void applyDirectory(SyncConfig config, Path packageDir, CopyMode mode) throws IOException {
         Path payload = requirePayload(packageDir);
         ExcludeMatcher matcher = new ExcludeMatcher(config.excludes());
         String timestamp = LocalDateTime.now().format(TIMESTAMP);

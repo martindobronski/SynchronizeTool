@@ -26,6 +26,9 @@ import java.util.zip.ZipOutputStream;
  * Stellt ein Paket als ZIP über HTTP im lokalen Netzwerk bereit. Der Zugriff ist über
  * einen zufälligen Token in der URL geschützt. Die Übertragung ist nicht verschlüsselt
  * und für vertrauenswürdige LANs gedacht.
+ *
+ * <p>Als Quelle dient entweder ein Paketordner, der beim Start gepackt wird, oder eine
+ * bereits vorhandene Paket-ZIP, die unverändert ausgeliefert wird.</p>
  */
 public final class PackageServer implements AutoCloseable {
 
@@ -33,6 +36,7 @@ public final class PackageServer implements AutoCloseable {
     private HttpServer server;
     private ExecutorService executor;
     private Path zipFile;
+    private boolean deleteZipOnStop;
     private String token;
     private String url;
 
@@ -40,15 +44,25 @@ public final class PackageServer implements AutoCloseable {
         this.log = log;
     }
 
-    /** Packt das Paketverzeichnis in ein ZIP und startet den HTTP-Server. Port 0 = freier Port. */
-    public synchronized String start(Path packageDir, int port) throws IOException {
+    /**
+     * Startet den HTTP-Server für ein Paketverzeichnis oder eine vorhandene Paket-ZIP.
+     * Port 0 = freier Port.
+     */
+    public synchronized String start(Path packageSource, int port) throws IOException {
         stop();
-        if (!Files.isDirectory(packageDir)) {
-            throw new IOException("Paketverzeichnis nicht gefunden: " + packageDir);
-        }
+        Path source = packageSource.toAbsolutePath().normalize();
         try {
-            zipFile = Files.createTempFile("synctool-package-", ".zip");
-            createZip(packageDir, zipFile);
+            if (Files.isDirectory(source)) {
+                zipFile = Files.createTempFile("synctool-package-", ".zip");
+                createZip(source, zipFile);
+                deleteZipOnStop = true;
+            } else if (PackageArchive.isCompleteArchive(source)) {
+                zipFile = source;
+                deleteZipOnStop = false;
+                log.accept("Freigabe verwendet vorhandene Paket-ZIP: " + source);
+            } else {
+                throw new IOException("Paket nicht gefunden oder unvollständig: " + source);
+            }
 
             token = UUID.randomUUID().toString().replace("-", "");
             server = HttpServer.create(new InetSocketAddress(port), 0);
@@ -82,14 +96,15 @@ public final class PackageServer implements AutoCloseable {
             executor.shutdownNow();
             executor = null;
         }
-        if (zipFile != null) {
+        if (zipFile != null && deleteZipOnStop) {
             try {
                 Files.deleteIfExists(zipFile);
             } catch (IOException ignored) {
                 // temporäre Datei; beim nächsten Aufräumen durch das OS entfernt
             }
-            zipFile = null;
         }
+        zipFile = null;
+        deleteZipOnStop = false;
         token = null;
         url = null;
     }

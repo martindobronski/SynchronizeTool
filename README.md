@@ -1,9 +1,12 @@
-# SynchronizeTool (Version 0.6.0)
+# SynchronizeTool (Version 0.8.0)
 
 Kleines Java/Swing-Werkzeug, um ausgewählte Dateien und Verzeichnisse von Rechner 1 auf
-Rechner 2 zu übertragen. Vor dem Überschreiben wird der vorhandene Stand auf Rechner 2
-mit einem Timestamp gesichert. Nach dem Kopieren wird per SHA-256 geprüft, ob beide
-Stände wirklich identisch sind.
+Rechner 2 zu übertragen. Exportierte Pakete liegen als ZIP-Dateien vor und werden beim
+Einspielen automatisch in einen temporären Ordner entpackt. Vor dem Überschreiben wird
+der vorhandene Stand auf Rechner 2 mit einem Timestamp gesichert. Nach dem Kopieren wird
+per SHA-256 geprüft, ob beide Stände wirklich identisch sind.
+
+> **Ausführliche Schritt-für-Schritt-Anleitung:** [BEDIENUNGSANLEITUNG.md](BEDIENUNGSANLEITUNG.md)
 
 ## Funktionen
 
@@ -21,35 +24,48 @@ Stände wirklich identisch sind.
 - **Pakete kombinieren**: mehrere Pakete zu einem Gesamtpaket zusammenführen
 - **Feste Programmordner** `Import`, `Export` und `Logfiles` mit mehreren benannten
   Paketen sowie Auswahl der vorhandenen Pakete über Dropdowns
+- **ZIP-Pakete**: Export als `<Name>.zip`, Import mit automatischem Entpacken in einen
+  temporären Ordner; alte entpackte Paketordner bleiben weiterhin lesbar
 - SHA-256-Prüfung nach dem Kopieren
 
 ## Grundidee
 
-Das Tool arbeitet mit benannten Paketordnern. Neben der Jar-Datei liegen feste
-Programmordner:
+Das Tool arbeitet mit benannten Paketen. Ein Paket ist eine ZIP-Datei, die im
+Wurzelverzeichnis eine `config.txt` und den Ordner `payload/` enthält. Neben der
+Jar-Datei liegen feste Programmordner:
 
 ```text
 SynchronizeTool/
-├── synchronize-tool-0.6.0.jar
+├── synchronize-tool-0.8.0.jar
 ├── Export/
-│   ├── Paket1/
-│   │   ├── config.txt      # ausgewählte Pfade + Ausschlussmuster
-│   │   └── payload/        # 1:1-Kopie der ausgewählten Daten
-│   ├── Paket2/
-│   └── JavaPaket/
+│   ├── Paket1.zip          # config.txt + payload/ im ZIP
+│   ├── Paket2.zip
+│   └── JavaPaket.zip
 ├── Import/
-│   └── JavaPaket/          # von Rechner 1 hierher kopiert
+│   └── JavaPaket.zip       # von Rechner 1 hierher kopiert
 └── Logfiles/
     ├── Erstellung/
     └── Einspielung/
 ```
 
+Aufbau einer Paket-ZIP:
+
+```text
+Paket1.zip
+├── config.txt              # ausgewählte Pfade + Ausschlussmuster
+└── payload/                # 1:1-Kopie der ausgewählten Daten
+```
+
 - **Rechner 1 (Quelle):** Paket in `Export` wählen oder neu anlegen, Daten auswählen →
   `Paket erstellen`.
-- **Transport:** den gewünschten Paketordner aus `Export` in den Ordner `Import` auf
-  Rechner 2 kopieren – oder im Reiter „Netzwerk“ direkt freigeben.
-- **Rechner 2 (Ziel):** Paket in `Import` auswählen → `Vorschau` und/oder
-  `Synchronisieren`.
+- **Transport:** die gewünschte ZIP-Datei aus `Export` nach `Import` auf Rechner 2
+  kopieren – oder im Reiter „Netzwerk“ direkt freigeben.
+- **Rechner 2 (Ziel):** Paket-ZIP in `Import` auswählen → `Vorschau` und/oder
+  `Synchronisieren`. Vor Vorschau und Einspielen wird die ZIP automatisch in einen
+  temporären Ordner entpackt und danach wieder gelöscht.
+
+Alte, bereits entpackte Paketordner mit `config.txt` und `payload/` werden weiterhin
+erkannt und gelesen; neu erzeugt werden nur noch ZIP-Dateien.
 
 Das Programmverzeichnis ist der Ordner der laufenden Jar-Datei. Wird das Tool aus einer
 IDE gestartet, gilt das aktuelle Arbeitsverzeichnis. `Import`, `Export` und `Logfiles`
@@ -63,7 +79,8 @@ Beim Einspielen passiert Folgendes – abhängig vom gewählten **Kopiermodus**:
    - `meinprogramm/` → `meinprogramm_20261116_143000/`
    - im Modus **Nur geänderte Dateien** entsteht die Sicherung nur für tatsächlich
      geänderte oder entfernte Dateien.
-2. Die neue Version aus `payload/` wird an denselben logischen Pfad kopiert.
+2. Die Paket-ZIP wird in einen temporären Ordner entpackt; die neue Version aus
+   `payload/` wird an denselben logischen Pfad kopiert.
 3. Per SHA-256 wird geprüft, ob die Inhalte übereinstimmen.
 
 ### Pfade und `${HOME}`
@@ -80,41 +97,38 @@ die Pfade auf beiden Rechnern gleich sein.
 ### Reiter „Quelle“
 
 1. Unter **Paket in Export** steht das aktuell gewählte Paket. Das Dropdown listet alle
-   vollständigen Pakete unter `Export`. **Laden** übernimmt die zugehörige
-   Konfiguration nach einer Sicherheitsabfrage; **Aktualisieren** liest die Liste neu ein.
-2. Das Feld **Paketverzeichnis** zeigt den vollständigen Pfad. Über **...** lässt sich
-   auch ein Paket außerhalb von `Export` wählen. Der übergeordnete Ordner `Export`
-   selbst kann nicht als Paket verwendet werden.
+   vollständigen Pakete unter `Export` – ZIP-Dateien und alte Paketordner. **Laden**
+   übernimmt die zugehörige Konfiguration nach einer Sicherheitsabfrage;
+   **Aktualisieren** liest die Liste neu ein.
+2. Das Feld **Paket-ZIP** zeigt den vollständigen Pfad. Über **...** lässt sich auch ein
+   Paket außerhalb von `Export` wählen. Der übergeordnete Ordner `Export` selbst kann
+   nicht als Paket verwendet werden.
 3. Mit **Datei hinzufügen** bzw. **Verzeichnis hinzufügen** die gewünschten Daten
    auswählen. Doppelte und verschachtelte Auswahlen werden automatisch bereinigt.
 4. **Ausschlüsse...** öffnet die Musterverwaltung (siehe unten).
-5. **Konfiguration speichern...** schreibt nur die `config.txt` (z. B. zum Ablegen unter
-   Versionskontrolle). Ist bereits eine Konfiguration geladen oder gespeichert, wird
-   genau diese Datei vorgeschlagen; sonst `synctool-config.txt`.
-6. **Paket erstellen (Export)** schreibt die `config.txt` *und* kopiert alle Daten in
-   `payload/`. Existiert das Paket bereits, wird nach Bestätigung der komplette
-   Paketordner geleert und neu geschrieben, damit keine alten Payload-Reste übrig
-   bleiben.
-7. **Neues Paket...** fragt nur den Paketnamen ab und legt `Export/<Paketname>` an.
+5. **Konfiguration speichern...** schreibt nur eine separate `config.txt` (z. B. zum
+   Ablegen unter Versionskontrolle) und überschreibt niemals die Paket-ZIP.
+6. **Paket erstellen (Export)** erzeugt die Paket-ZIP mit `config.txt` und `payload/`.
+   Existiert die ZIP bereits, wird sie nach Bestätigung ersetzt. Nicht mehr ausgewählte
+   Daten sind anschließend nicht mehr im Paket enthalten.
+7. **Neues Paket...** fragt nur den Paketnamen ab und legt `Export/<Paketname>.zip` an.
    Optional wird die aktuelle Auswahl übernommen; ohne Häkchen startet das neue Paket
    leer (die Ausschlussmuster bleiben erhalten). So lassen sich mehrere Pakete parallel
-   pflegen, z. B. `Paket1`, `Paket2` oder `JavaPaket`. Der Paketname darf keine
-   Pfadtrenner oder Sonderzeichen enthalten; ein bereits vorhandener Name wird
-   abgelehnt.
+   pflegen, z. B. `Paket1.zip`, `Paket2.zip` oder `JavaPaket.zip`. Die Endung `.zip`
+   wird bei Bedarf automatisch ergänzt; ein bereits vorhandener Name wird abgelehnt.
 
 ### Gespeicherte Konfigurationen
 
 Über der Auswahlliste im Reiter „Quelle“ befindet sich das Feld
 **Gespeicherte Konfigurationen**. Es bleibt auch nach einem Neustart erhalten und
-enthält die zuletzt verwendeten `config.txt`-Dateien, die neueste zuerst.
+enthält die zuletzt verwendeten Pakete und `config.txt`-Dateien, das neueste zuerst.
 
 - **Laden** öffnet die markierte Konfiguration. Deren Dateien/Verzeichnisse und
-  Ausschlussmuster ersetzen die aktuelle Auswahl; das passende Paketverzeichnis wird
-  automatisch gesetzt. Anschließend lässt sich die Auswahl anpassen und das Paket über
-  **Paket erstellen (Export)** neu schreiben. **Konfiguration speichern...** schlägt
-  dabei wieder dieselbe Datei vor.
-- **Öffnen...** wählt einen Paketordner oder eine `config.txt` direkt vom Dateisystem.
-  Bei einem Ordner wird die darin liegende `config.txt` geladen.
+  Ausschlussmuster ersetzen die aktuelle Auswahl; das passende Paket wird automatisch
+  gesetzt. Anschließend lässt sich die Auswahl anpassen und das Paket über
+  **Paket erstellen (Export)** neu schreiben.
+- **Öffnen...** wählt eine Paket-ZIP, einen alten Paketordner oder eine `config.txt`
+  direkt vom Dateisystem. Bei einem Ordner wird die darin liegende `config.txt` geladen.
 - **Aus Liste entfernen** blendet einen Eintrag nur aus der Liste aus; Dateien und
   Paket bleiben unverändert.
 
@@ -126,15 +140,15 @@ Gespeichert wird sie unter:
 ~/.synchronizetool/recent-configs.txt
 ```
 
-Sie enthält maximal 25 Einträge, doppelte Pfade werden zusammengefasst. Fehlt eine
-`config.txt` inzwischen, bleibt der Eintrag sichtbar und wird mit „(nicht gefunden)“
-markiert.
+Sie enthält maximal 25 Einträge, doppelte Pfade werden zusammengefasst. Fehlt ein Paket
+inzwischen, bleibt der Eintrag sichtbar und wird mit „(nicht gefunden)“ markiert.
 
-Beim Laden gilt: Heißt die Datei `config.txt`, wird ihr Ordner als Paketverzeichnis
-verwendet. Bei einem anderen Dateinamen wird das erste Paket in `Export` – oder der
-Ordner `Export` selbst, wenn noch kein Paket vorhanden ist – eingetragen und ein Hinweis
-ins Protokoll geschrieben. So bleibt eine separat abgelegte Konfiguration nutzbar, ohne
-ein bestehendes Paket zu überschreiben.
+Beim Laden gilt: Eine Paket-ZIP wird direkt gelesen, bei einem Ordner wird die
+`config.txt` darin verwendet. Eine separat abgelegte Konfigurationsdatei lässt sich
+weiterhin laden; als Ziel für einen anschließenden Export wird dann
+`Export/Paket1.zip` – oder das erste vorhandene Paket – eingetragen und ein Hinweis ins
+Protokoll geschrieben. So bleibt eine separate Konfiguration nutzbar, ohne ein
+bestehendes Paket zu überschreiben.
 
 ### Mehrere Pakete kombinieren
 
@@ -146,13 +160,16 @@ zu einem Gesamtpaket zusammenführen, zum Beispiel Paket 1, 3 und 5.
 2. Rechts die Reihenfolge festlegen: Das **oberste** Paket hat Vorrang, wenn dieselbe
    Datei in mehreren Paketen vorkommt. **Nach oben** bzw. **Nach unten** ändert die
    Reihenfolge.
-3. Nur den Paketnamen für das Gesamtpaket wählen. Es wird als `Export/<Paketname>`
-   angelegt; ein bereits vorhandenes Zielverzeichnis wird nicht überschrieben.
-4. **OK** erzeugt `config.txt` und `payload/` des Gesamtpakets.
+3. Nur den Paketnamen für das Gesamtpaket wählen. Es wird als
+   `Export/<Paketname>.zip` angelegt; ein bereits vorhandenes Ziel wird nicht
+   überschrieben.
+4. **OK** entpackt die Quellpakete bei Bedarf, führt sie zusammen und schreibt die neue
+   Paket-ZIP.
 
 Dabei gilt:
 
-- Verwendet werden nur vollständige Pakete mit `config.txt` und `payload/`.
+- Verwendet werden nur vollständige Pakete mit `config.txt` und `payload/`, sowohl als
+  ZIP als auch als alter Paketordner.
 - Die Ausschlussmuster aller Pakete werden zusammengeführt und beim Zusammenbau
   angewendet.
 - Gleichnamige Dateien aus dem obersten Paket überschreiben die Versionen darunter
@@ -168,20 +185,23 @@ Dabei gilt:
 ### Reiter „Ziel“
 
 1. Unter **Paket in Import** das gewünschte Paket auswählen. Das Dropdown listet alle
-   vollständigen Pakete unter `Import`; die Auswahl setzt das Paketverzeichnis und zeigt
-   die Konfiguration an. **Aktualisieren** liest die Liste neu ein, z. B. nachdem ein
-   Paketordner manuell nach `Import` kopiert wurde.
-2. Das Feld **Paketverzeichnis** zeigt den vollständigen Pfad. Über **...** lässt sich
-   auch ein Paket außerhalb von `Import` wählen. Der übergeordnete Ordner `Import`
-   selbst kann nicht eingespielt werden.
+   vollständigen Pakete unter `Import` – ZIP-Dateien und alte Paketordner; die Auswahl
+   setzt den Paketpfad und zeigt die Konfiguration an. **Aktualisieren** liest die Liste
+   neu ein, z. B. nachdem eine Paket-ZIP manuell nach `Import` kopiert wurde.
+2. Das Feld **Paket-ZIP** zeigt den vollständigen Pfad. Über **...** lässt sich auch ein
+   Paket außerhalb von `Import` wählen. Der übergeordnete Ordner `Import` selbst kann
+   nicht eingespielt werden.
 3. **Konfiguration anzeigen** zeigt die Pfade und ihre Auflösung auf diesem Rechner.
+   Bei einer ZIP wird die `config.txt` direkt aus dem Archiv gelesen.
 4. Unter **Kopiermodus** wählen:
    - **Nur geänderte Dateien** (Standard): kopiert nur neue und geänderte Dateien.
    - **Alles ersetzen**: sichert und kopiert jeden Eintrag vollständig.
    Die Auswahl wird gespeichert und gilt auch für **Herunterladen & Synchronisieren**
    im Netzwerk-Reiter.
-5. **Vorschau (Dry Run)** vergleicht, ohne etwas zu verändern.
-6. **Synchronisieren (Sicherung + Kopieren)** führt den Abgleich aus.
+5. **Vorschau (Dry Run)** vergleicht, ohne etwas zu verändern. Die Paket-ZIP wird dafür
+   temporär entpackt.
+6. **Synchronisieren (Sicherung + Kopieren)** führt den Abgleich aus; auch hier wird die
+   ZIP vorher temporär entpackt und danach wieder gelöscht.
 7. **Letzte Synchronisation rückgängig machen** spielt die Sicherungen des letzten
    Laufs zurück.
 
@@ -310,10 +330,10 @@ Wenn beide Rechner im selben LAN sind, kann das Paket direkt übertragen werden.
 ### Rechner 1
 
 1. Im Reiter **Netzwerk** einen Port wählen (Standard `8765`).
-2. **Paket erstellen & freigeben** klicken. Das Tool exportiert das aktuell in „Quelle“
-   gewählte Paket – ein vorhandenes Paket wird nach Bestätigung vollständig ersetzt –
-   und startet einen kleinen HTTP-Server. Die angezeigte URL enthält einen zufälligen
-   Token.
+2. **Paket erstellen & freigeben** klicken. Das Tool erzeugt die aktuell in „Quelle“
+   gewählte Paket-ZIP – eine vorhandene ZIP wird nach Bestätigung ersetzt – und gibt
+   genau diese ZIP über einen kleinen HTTP-Server frei. Die angezeigte URL enthält einen
+   zufälligen Token.
 3. URL kopieren oder auf Rechner 2 abtippen.
 
 ### Rechner 2
@@ -322,10 +342,12 @@ Wenn beide Rechner im selben LAN sind, kann das Paket direkt übertragen werden.
 2. **Nur herunterladen**, **Herunterladen & Vorschau** oder
    **Herunterladen & Synchronisieren** wählen. Für das Einspielen gilt derselbe
    Kopiermodus, der im Reiter „Ziel“ ausgewählt ist.
-3. Das Paket wird standardmäßig nach `Import/Netzwerkpaket-<Zeitstempel>` geladen.
-   Ein anderer Paketordner kann im Feld **Paketordner** gewählt werden; vorhandene
-   Ordner werden nach Bestätigung ersetzt. Anschließend steht das Paket auch im
-   Reiter „Ziel“ zur Auswahl.
+3. Das Paket wird standardmäßig als
+   `Import/Netzwerkpaket-<Zeitstempel>.zip` gespeichert. Ein anderer Speicherort kann im
+   Feld **Paket-ZIP** gewählt werden; die Endung `.zip` wird bei Bedarf ergänzt,
+   vorhandene Dateien werden nach Bestätigung ersetzt. Anschließend steht das Paket auch
+   im Reiter „Ziel“ zur Auswahl. Beim Herunterladen mit Vorschau oder Synchronisieren
+   wird die ZIP temporär entpackt.
 
 Der Token schützt vor versehentlichem Zugriff, die Übertragung ist aber **unverschlüsselt
 (HTTP)**. Nur in vertrauenswürdigen Netzen verwenden. Bei Bedarf muss der Port in der
@@ -353,7 +375,7 @@ Voraussetzung: JDK 17 oder neuer.
 
 ```bash
 mvn package
-java -jar target/synchronize-tool-0.6.0.jar
+java -jar target/synchronize-tool-0.8.0.jar
 ```
 
 Ohne Maven geht es auch direkt:

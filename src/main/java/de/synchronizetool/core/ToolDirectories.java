@@ -14,8 +14,8 @@ import java.util.List;
  *
  * <pre>
  * Programmordner/
- *   Import/
- *   Export/
+ *   Import/     Paket-ZIPs von Rechner 1
+ *   Export/     erzeugte Paket-ZIPs
  *   Logfiles/
  * </pre>
  *
@@ -76,22 +76,32 @@ public final class ToolDirectories {
         Files.createDirectories(logfilesDir());
     }
 
-    /** Ein vollständiges Paket besteht aus config.txt und payload/. */
-    public static boolean isCompletePackage(Path directory) {
-        return directory != null
-                && Files.isDirectory(directory)
-                && Files.isRegularFile(directory.resolve(PackageService.CONFIG_FILE))
-                && Files.isDirectory(directory.resolve(PackageService.PAYLOAD_DIR));
+    /**
+     * Ein vollständiges Paket ist ein Ordner mit config.txt und payload/ oder eine
+     * entsprechende ZIP-Datei. ZIP-Pakete sind die Regel; entpackte Ordner bleiben
+     * aus Kompatibilitätsgründen lesbar.
+     */
+    public static boolean isCompletePackage(Path path) {
+        if (path == null) {
+            return false;
+        }
+        if (Files.isDirectory(path)) {
+            return Files.isRegularFile(path.resolve(PackageService.CONFIG_FILE))
+                    && Files.isDirectory(path.resolve(PackageService.PAYLOAD_DIR));
+        }
+        return PackageArchive.isCompleteArchive(path);
     }
 
-    /** Liefert alle vollständigen Paketordner direkt unterhalb von {@code parent}. */
+    /** Liefert alle vollständigen Pakete (ZIP oder Ordner) direkt unterhalb von {@code parent}. */
     public static List<Path> listPackages(Path parent) {
         if (parent == null || !Files.isDirectory(parent)) {
             return List.of();
         }
         try (var stream = Files.list(parent)) {
             List<Path> packages = new ArrayList<>();
-            stream.filter(ToolDirectories::isCompletePackage).forEach(packages::add);
+            stream.filter(path -> !path.getFileName().toString().startsWith("."))
+                    .filter(ToolDirectories::isCompletePackage)
+                    .forEach(packages::add);
             packages.sort(Comparator
                     .comparing((Path path) -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER)
                     .thenComparing(path -> path.getFileName().toString()));
